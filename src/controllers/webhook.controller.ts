@@ -2,9 +2,8 @@ import type { Request, Response } from "express";
 import { env } from "../config/env.js";
 import { logger } from "../utils/logger.js";
 import { UnauthorizedError } from "../utils/errors.js";
-import { whatsappService } from "../services/whatsapp.service.js";
-import { botService } from "../services/bot.service.js";
-import type { WhatsAppIncomingMessage, WhatsAppWebhookPayload } from "../types/whatsapp.types.js";
+import { processWebhookPayload } from "../services/inbound-message-processor.service.js";
+import type { WhatsAppWebhookPayload } from "../types/whatsapp.types.js";
 
 export class WebhookController {
   /** Meta calls this once when the webhook URL is configured, to confirm ownership. */
@@ -27,33 +26,17 @@ export class WebhookController {
 
     // Errors here must never reach Express error middleware: the response is
     // already sent, so `next(err)` would blow up trying to set headers twice.
-    this.processPayload(req.body as WhatsAppWebhookPayload).catch((err: unknown) => {
+    const rawBody = req.rawBody;
+    if (!rawBody) {
+      // Shouldn't happen: `verifyWebhookSignature` (webhook.routes.ts) runs first and already rejects requests without a raw body.
+      logger.error("Missing rawBody on an already-verified webhook request");
+      return;
+    }
+
+    processWebhookPayload(rawBody, req.body as WhatsAppWebhookPayload).catch((err: unknown) => {
       logger.error({ err }, "Failed to process WhatsApp webhook payload");
     });
   };
-
-  private async processPayload(payload: WhatsAppWebhookPayload): Promise<void> {
-    for (const entry of payload.entry ?? []) {
-      for (const change of entry.changes ?? []) {
-        const { messages = [], statuses = [] } = change.value;
-
-        for (const message of messages) {
-          await this.handleIncomingMessage(message);
-        }
-
-        for (const status of statuses) {
-          logger.info({ status }, "WhatsApp message status update");
-        }
-      }
-    }
-  }
-
-  private async handleIncomingMessage(message: WhatsAppIncomingMessage): Promise<void> {
-    logger.info({ from: message.from, type: message.type }, "Incoming WhatsApp message");
-
-    await botService.handleIncomingMessage(message);
-    await whatsappService.markAsRead(message.id);
-  }
 }
 
 export const webhookController = new WebhookController();

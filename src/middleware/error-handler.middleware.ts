@@ -3,12 +3,7 @@ import { AppError, ValidationError } from "../utils/errors.js";
 import { logger } from "../utils/logger.js";
 import { env } from "../config/env.js";
 
-export function errorHandler(
-  err: Error,
-  req: Request,
-  res: Response,
-  _next: NextFunction,
-): void {
+export function errorHandler(err: Error, req: Request, res: Response, _next: NextFunction): void {
   if (err instanceof AppError) {
     res.status(err.statusCode).json({
       status: "error",

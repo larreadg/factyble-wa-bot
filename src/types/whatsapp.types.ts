@@ -22,7 +22,10 @@ export type WhatsAppIncomingMessage = Prettify<
   BaseIncomingMessage &
     (
       | { type: "text"; text: { body: string } }
-      | { type: "image"; image: { id: string; mime_type: string; sha256: string; caption?: string } }
+      | {
+          type: "image";
+          image: { id: string; mime_type: string; sha256: string; caption?: string };
+        }
       | { type: "audio"; audio: { id: string; mime_type: string } }
       | {
           type: "video";
@@ -45,7 +48,10 @@ export type WhatsAppIncomingMessage = Prettify<
           type: "interactive";
           interactive:
             | { type: "button_reply"; button_reply: { id: string; title: string } }
-            | { type: "list_reply"; list_reply: { id: string; title: string; description?: string } };
+            | {
+                type: "list_reply";
+                list_reply: { id: string; title: string; description?: string };
+              };
         }
       | { type: "reaction"; reaction: { message_id: string; emoji: string } }
       | { type: "unknown"; errors?: Array<{ code: number; title: string }> }
@@ -93,8 +99,9 @@ export interface WhatsAppWebhookPayload {
 
 /** Narrows an incoming message to a specific `type` — usable as an Array#filter predicate. */
 export function isMessageOfType<T extends WhatsAppIncomingMessage["type"]>(type: T) {
-  return (message: WhatsAppIncomingMessage): message is Extract<WhatsAppIncomingMessage, { type: T }> =>
-    message.type === type;
+  return (
+    message: WhatsAppIncomingMessage,
+  ): message is Extract<WhatsAppIncomingMessage, { type: T }> => message.type === type;
 }
 
 export type WhatsAppOutgoingMessage =

@@ -1,0 +1,629 @@
+// Prisma schema for the WhatsApp conversational backend.
+//
+// Scope: conversations, sessions, flow state, messages, webhooks, idempotency,
+// outbox, and audit. Fiscal processing (invoices/credit notes) is NOT modeled
+// here — this backend only keeps enough data to drive the conversation and a
+// thin pointer to the external billing backend's resources.
+//
+// See docs/conversation-architecture.md for the full design rationale.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+//
+// SQLite has no native enum type; Prisma emulates `enum` as a TEXT column
+// with no DB-level CHECK constraint, but generates a real TypeScript union in
+// Prisma Client, so writes are still statically validated at the app layer.
+// This keeps the schema portable to Postgres (where enums map natively).
+// ---------------------------------------------------------------------------
+
+enum TenantStatus {
+  ACTIVE
+  SUSPENDED
+  INACTIVE
+}
+
+enum WhatsAppProvider {
+  META
+}
+
+enum WhatsAppAccountStatus {
+  ACTIVE
+  DISABLED
+}
+
+enum ConversationStatus {
+  OPEN
+  WAITING_CUSTOMER
+  WAITING_EXTERNAL_SERVICE
+  WAITING_AGENT
+  HANDOFF
+  CLOSED
+  ARCHIVED
+}
+
+enum FlowType {
+  MAIN_MENU
+  CREATE_INVOICE
+  QUERY_INVOICE
+  CREATE_CREDIT_NOTE
+  QUERY_CREDIT_NOTE
+}
+
+enum SessionStatus {
+  ACTIVE
+  WAITING_INPUT
+  VALIDATING
+  WAITING_EXTERNAL_SERVICE
+  COMPLETED
+  EXPIRED
+  CANCELLED
+  FAILED
+  HANDOFF
+}
+
+enum TransitionTrigger {
+  USER_MESSAGE
+  SYSTEM_EVENT
+  VALIDATION_SUCCESS
+  VALIDATION_FAILURE
+  EXTERNAL_REQUEST_STARTED
+  EXTERNAL_REQUEST_SUCCEEDED
+  EXTERNAL_REQUEST_FAILED
+  TIMEOUT
+  CANCEL_COMMAND
+  HANDOFF
+  MANUAL_RESUME
+}
+
+enum MessageDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum MessageType {
+  TEXT
+  IMAGE
+  DOCUMENT
+  AUDIO
+  VIDEO
+  LOCATION
+  CONTACT
+  INTERACTIVE
+  TEMPLATE
+  REACTION
+  SYSTEM
+  UNKNOWN
+}
+
+enum MessageStatus {
+  RECEIVED
+  PROCESSING
+  PROCESSED
+  IGNORED
+  QUEUED
+  SENDING
+  SENT
+  DELIVERED
+  READ
+  FAILED
+}
+
+enum WebhookEventStatus {
+  RECEIVED
+  PROCESSING
+  PROCESSED
+  RETRY_PENDING
+  FAILED
+  IGNORED
+}
+
+enum ExternalOperation {
+  CREATE_INVOICE
+  QUERY_INVOICE
+  CREATE_CREDIT_NOTE
+  QUERY_CREDIT_NOTE
+}
+
+enum ExternalRequestStatus {
+  PENDING
+  PROCESSING
+  SUCCEEDED
+  RETRY_PENDING
+  FAILED
+  CANCELLED
+  UNKNOWN
+}
+
+enum IdempotencyScope {
+  WEBHOOK
+  INBOUND_MESSAGE
+  OUTBOUND_MESSAGE
+  SESSION_TRANSITION
+  CREATE_INVOICE
+  CREATE_CREDIT_NOTE
+}
+
+enum IdempotencyStatus {
+  PROCESSING
+  COMPLETED
+  FAILED
+  EXPIRED
+}
+
+enum OutboxEventStatus {
+  PENDING
+  PROCESSING
+  PROCESSED
+  RETRY_PENDING
+  FAILED
+}
+
+enum AuditActorType {
+  CONTACT
+  USER
+  SYSTEM
+  WORKER
+  EXTERNAL_SERVICE
+}
+
+// ---------------------------------------------------------------------------
+// Tenant
+// ---------------------------------------------------------------------------
+
+model Tenant {
+  id        String       @id @default(cuid(2))
+  name      String
+  legalName String
+  taxId     String       @unique
+  status    TenantStatus @default(ACTIVE)
+  timezone  String       @default("America/Asuncion")
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  whatsAppAccounts        WhatsAppAccount[]
+  contacts                Contact[]
+  conversations           Conversation[]
+  sessions                ConversationSession[]
+  messages                Message[]
+  webhookEvents           WebhookEvent[]
+  externalServiceRequests ExternalServiceRequest[]
+  idempotencyRecords      IdempotencyRecord[]
+  outboxEvents            OutboxEvent[]
+  auditLogs               AuditLog[]
+
+  @@map("tenants")
+}
+
+// ---------------------------------------------------------------------------
+// WhatsAppAccount
+// ---------------------------------------------------------------------------
+
+model WhatsAppAccount {
+  id                 String                @id @default(cuid(2))
+  tenantId           String
+  provider           WhatsAppProvider      @default(META)
+  phoneNumberId      String                @unique
+  businessAccountId  String
+  displayPhoneNumber String
+  displayName        String?
+  status             WhatsAppAccountStatus @default(ACTIVE)
+  createdAt          DateTime              @default(now())
+  updatedAt          DateTime              @updatedAt
+
+  tenant        Tenant         @relation(fields: [tenantId], references: [id])
+  conversations Conversation[]
+  messages      Message[]
+
+  @@index([tenantId, status])
+  @@index([tenantId, provider])
+  @@map("whatsapp_accounts")
+}
+
+// ---------------------------------------------------------------------------
+// Contact
+// ---------------------------------------------------------------------------
+
+model Contact {
+  id          String    @id @default(cuid(2))
+  tenantId    String
+  waId        String
+  phoneNumber String
+  profileName String?
+  firstName   String?
+  lastName    String?
+  email       String?
+  locale      String?
+  isBlocked   Boolean   @default(false)
+  lastSeenAt  DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  tenant        Tenant         @relation(fields: [tenantId], references: [id])
+  conversations Conversation[]
+  messages      Message[]
+
+  @@unique([tenantId, waId])
+  @@index([tenantId, phoneNumber])
+  @@map("contacts")
+}
+
+// ---------------------------------------------------------------------------
+// Conversation — the general thread. Does NOT hold the current flow step;
+// that lives on ConversationSession.
+// ---------------------------------------------------------------------------
+
+model Conversation {
+  id                String             @id @default(cuid(2))
+  tenantId          String
+  whatsAppAccountId String
+  contactId         String
+  status            ConversationStatus @default(OPEN)
+  assignedUserId    String?
+  startedAt         DateTime           @default(now())
+  lastMessageAt     DateTime?
+  closedAt          DateTime?
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+
+  tenant          Tenant                @relation(fields: [tenantId], references: [id])
+  whatsAppAccount WhatsAppAccount       @relation(fields: [whatsAppAccountId], references: [id])
+  contact         Contact               @relation(fields: [contactId], references: [id])
+  sessions        ConversationSession[]
+  messages        Message[]
+
+  @@index([tenantId, status])
+  @@index([contactId, lastMessageAt])
+  @@index([whatsAppAccountId, status])
+  @@index([assignedUserId, status])
+  @@index([tenantId, lastMessageAt])
+  @@map("conversations")
+}
+
+// ---------------------------------------------------------------------------
+// ConversationSession — one concrete run of a flow. The most important model:
+// optimistic locking (revision), logical locking (lockedAt/lockedBy/lockExpiresAt),
+// and expiry all live here. See docs/conversation-architecture.md.
+//
+// "One active session per conversation" is enforced primarily inside a DB
+// transaction in the session service (portable to any SQL backend). SQLite
+// additionally supports partial unique indexes, so a defense-in-depth
+// `idx_one_active_session_per_conversation` partial unique index is added by
+// raw SQL in the initial migration — see prisma/migrations/*/migration.sql.
+// That extra index is SQLite-specific and documented as a Postgres migration
+// concern; the transactional check alone is what must hold on any database.
+// ---------------------------------------------------------------------------
+
+model ConversationSession {
+  id             String        @id @default(cuid(2))
+  tenantId       String
+  conversationId String
+  flowType       FlowType
+  flowVersion    Int           @default(1)
+  currentStep    String
+  previousStep   String?
+  status         SessionStatus @default(ACTIVE)
+
+  /// Serialized (JSON string) flow context envelope: `{ version, data }`.
+  /// Always read through contextCodec.deserialize<T>() — never cast directly.
+  context  String
+  revision Int    @default(0)
+
+  startedAt      DateTime  @default(now())
+  lastActivityAt DateTime  @default(now())
+  expiresAt      DateTime
+  completedAt    DateTime?
+  cancelledAt    DateTime?
+  failedAt       DateTime?
+  failureCode    String?
+  failureReason  String?
+
+  lockedAt      DateTime?
+  lockedBy      String?
+  lockExpiresAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant                  Tenant                   @relation(fields: [tenantId], references: [id])
+  conversation            Conversation             @relation(fields: [conversationId], references: [id])
+  transitions             SessionTransition[]
+  messages                Message[]
+  externalServiceRequests ExternalServiceRequest[]
+
+  @@index([conversationId, status])
+  @@index([tenantId, status])
+  @@index([status, expiresAt])
+  @@index([status, lockExpiresAt])
+  @@map("conversation_sessions")
+}
+
+// ---------------------------------------------------------------------------
+// SessionTransition — append-only history. Never rely solely on the current
+// state on ConversationSession; this table is the audit trail of how it got
+// there.
+// ---------------------------------------------------------------------------
+
+model SessionTransition {
+  id         String            @id @default(cuid(2))
+  sessionId  String
+  fromStatus SessionStatus?
+  toStatus   SessionStatus
+  fromStep   String?
+  toStep     String
+  trigger    TransitionTrigger
+  messageId  String?
+
+  /// Serialized (JSON string) free-form metadata about the transition.
+  metadata String?
+
+  createdAt DateTime @default(now())
+
+  session ConversationSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId, createdAt])
+  @@map("session_transitions")
+}
+
+// ---------------------------------------------------------------------------
+// Message — inbound and outbound. `providerMessageId` uniqueness (scoped to
+// the WhatsApp account) is the dedup guard against reprocessing the same
+// WhatsApp message twice.
+// ---------------------------------------------------------------------------
+
+model Message {
+  id                       String           @id @default(cuid(2))
+  tenantId                 String
+  conversationId           String
+  sessionId                String?
+  whatsAppAccountId        String
+  contactId                String
+  providerMessageId        String?
+  replyToProviderMessageId String?
+  direction                MessageDirection
+  type                     MessageType
+  status                   MessageStatus    @default(RECEIVED)
+  text                     String?
+
+  /// Serialized (JSON string) of the full type-specific payload (image ids,
+  /// interactive replies, template params, etc).
+  payload String?
+
+  correlationId String?
+
+  receivedAt   DateTime?
+  queuedAt     DateTime?
+  sentAt       DateTime?
+  deliveredAt  DateTime?
+  readAt       DateTime?
+  failedAt     DateTime?
+  errorCode    String?
+  errorMessage String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant          Tenant               @relation(fields: [tenantId], references: [id])
+  conversation    Conversation         @relation(fields: [conversationId], references: [id])
+  session         ConversationSession? @relation(fields: [sessionId], references: [id])
+  whatsAppAccount WhatsAppAccount      @relation(fields: [whatsAppAccountId], references: [id])
+  contact         Contact              @relation(fields: [contactId], references: [id])
+  statusEvents    MessageStatusEvent[]
+
+  @@unique([whatsAppAccountId, providerMessageId])
+  @@index([conversationId, createdAt])
+  @@index([sessionId, createdAt])
+  @@index([tenantId, direction, status])
+  @@index([status, createdAt])
+  @@index([correlationId])
+  @@map("messages")
+}
+
+// ---------------------------------------------------------------------------
+// MessageStatusEvent — full history of delivery-status callbacks from Meta.
+// Message.status holds the current (monotonic) status; this table holds
+// everything ever received, including out-of-order deliveries.
+// ---------------------------------------------------------------------------
+
+model MessageStatusEvent {
+  id                String   @id @default(cuid(2))
+  messageId         String
+  providerStatus    String
+  providerTimestamp DateTime
+  errorCode         String?
+  errorTitle        String?
+  errorDetails      String?
+
+  /// Serialized (JSON string) of the raw status payload from the webhook.
+  payload String?
+
+  createdAt DateTime @default(now())
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@index([messageId, createdAt])
+  @@map("message_status_events")
+}
+
+// ---------------------------------------------------------------------------
+// WebhookEvent — every webhook delivery is persisted before processing.
+// `payloadHash` is the primary idempotency guard (Meta's webhook envelope has
+// no single stable event id — an entry can bundle multiple messages/statuses).
+// ---------------------------------------------------------------------------
+
+model WebhookEvent {
+  id              String             @id @default(cuid(2))
+  tenantId        String?
+  provider        WhatsAppProvider   @default(META)
+  providerEventId String?
+  eventType       String
+  payload         String
+  payloadHash     String             @unique
+  status          WebhookEventStatus @default(RECEIVED)
+  attemptCount    Int                @default(0)
+
+  receivedAt          DateTime  @default(now())
+  processingStartedAt DateTime?
+  processedAt         DateTime?
+  nextAttemptAt       DateTime?
+  lastError           String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant Tenant? @relation(fields: [tenantId], references: [id])
+
+  @@index([tenantId, status])
+  @@index([status, nextAttemptAt])
+  @@map("webhook_events")
+}
+
+// ---------------------------------------------------------------------------
+// ExternalServiceRequest — every call to the external billing backend.
+// idempotencyKey is unique per tenant so a retried operation is guaranteed to
+// reuse (or safely reconcile against) the same external attempt.
+// ---------------------------------------------------------------------------
+
+model ExternalServiceRequest {
+  id             String            @id @default(cuid(2))
+  tenantId       String
+  conversationId String?
+  sessionId      String?
+  operation      ExternalOperation
+  idempotencyKey String
+  correlationId  String
+
+  /// Serialized (JSON string), sanitized — never contains secrets/tokens.
+  requestPayload  String
+  /// Serialized (JSON string), sanitized.
+  responsePayload String?
+
+  status             ExternalRequestStatus @default(PENDING)
+  httpStatus         Int?
+  externalResourceId String?
+  attemptCount       Int                   @default(0)
+
+  requestedAt   DateTime  @default(now())
+  respondedAt   DateTime?
+  nextAttemptAt DateTime?
+  errorCode     String?
+  errorMessage  String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant  Tenant               @relation(fields: [tenantId], references: [id])
+  session ConversationSession? @relation(fields: [sessionId], references: [id])
+
+  @@unique([tenantId, idempotencyKey])
+  @@index([sessionId, status])
+  @@index([status, nextAttemptAt])
+  @@map("external_service_requests")
+}
+
+// ---------------------------------------------------------------------------
+// IdempotencyRecord — general-purpose idempotency ledger, keyed by scope.
+// ---------------------------------------------------------------------------
+
+model IdempotencyRecord {
+  id          String            @id @default(cuid(2))
+  tenantId    String
+  scope       IdempotencyScope
+  key         String
+  requestHash String
+  status      IdempotencyStatus @default(PROCESSING)
+
+  resourceType       String?
+  resourceId         String?
+  responseStatusCode Int?
+  responseBody       String?
+
+  lockedAt    DateTime?
+  completedAt DateTime?
+  expiresAt   DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@unique([tenantId, scope, key])
+  @@map("idempotency_records")
+}
+
+// ---------------------------------------------------------------------------
+// OutboxEvent — transactional outbox. Written in the same transaction as the
+// session/message mutation it accompanies; a separate dispatcher claims and
+// processes these afterward (outside any DB transaction).
+// ---------------------------------------------------------------------------
+
+model OutboxEvent {
+  id            String @id @default(cuid(2))
+  tenantId      String
+  aggregateType String
+  aggregateId   String
+  eventType     String
+
+  /// Serialized (JSON string) event payload.
+  payload String
+
+  status       OutboxEventStatus @default(PENDING)
+  attemptCount Int               @default(0)
+
+  availableAt   DateTime  @default(now())
+  lockedAt      DateTime?
+  lockedBy      String?
+  lockExpiresAt DateTime?
+  processedAt   DateTime?
+  lastError     String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@index([status, availableAt])
+  @@index([aggregateType, aggregateId])
+  @@map("outbox_events")
+}
+
+// ---------------------------------------------------------------------------
+// AuditLog — important operations. Never contains tokens/passwords/secrets.
+// ---------------------------------------------------------------------------
+
+model AuditLog {
+  id            String         @id @default(cuid(2))
+  tenantId      String
+  actorType     AuditActorType
+  actorId       String?
+  action        String
+  entityType    String
+  entityId      String
+  requestId     String?
+  correlationId String?
+  ipAddress     String?
+  userAgent     String?
+
+  /// Serialized (JSON string), sanitized.
+  beforeData String?
+  /// Serialized (JSON string), sanitized.
+  afterData  String?
+  /// Serialized (JSON string), sanitized.
+  metadata   String?
+
+  createdAt DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@index([tenantId, entityType, entityId])
+  @@index([tenantId, createdAt])
+  @@map("audit_logs")
+}

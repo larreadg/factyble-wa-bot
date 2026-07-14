@@ -21,6 +21,18 @@ const envSchema = z.object({
   WHATSAPP_ACCESS_TOKEN: z.string().min(1, "WHATSAPP_ACCESS_TOKEN is required"),
   WHATSAPP_VERIFY_TOKEN: z.string().min(1, "WHATSAPP_VERIFY_TOKEN is required"),
   WHATSAPP_APP_SECRET: z.string().min(1, "WHATSAPP_APP_SECRET is required"),
+
+  DATABASE_URL: z.string().min(1, "DATABASE_URL is required"),
+  DATABASE_BUSY_TIMEOUT_MS: z.coerce.number().int().positive().default(5000),
+
+  BILLING_BACKEND_BASE_URL: z.string().min(1, "BILLING_BACKEND_BASE_URL is required"),
+  BILLING_BACKEND_API_KEY: z.string().min(1, "BILLING_BACKEND_API_KEY is required"),
+  BILLING_BACKEND_TIMEOUT_MS: z.coerce.number().int().positive().default(15000),
+
+  SESSION_DEFAULT_TTL_MINUTES: z.coerce.number().int().positive().default(30),
+  SESSION_LOCK_TTL_SECONDS: z.coerce.number().int().positive().default(30),
+  SESSION_MAX_INVALID_ATTEMPTS: z.coerce.number().int().positive().default(3),
+  SESSION_EXTERNAL_WAIT_TTL_MINUTES: z.coerce.number().int().positive().default(10),
 });
 
 const parsed = envSchema.safeParse(process.env);

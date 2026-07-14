@@ -8,3 +8,9 @@ dist/
 .agents/
 .claude/
 CLAUDE.md
+
+# SQLite database files (migrations under prisma/migrations ARE versioned)
+*.db
+*.db-journal
+*.db-shm
+*.db-wal

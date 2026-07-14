@@ -56,7 +56,10 @@ export class WhatsAppService {
     });
 
     if (!response.ok) {
-      logger.warn({ status: response.status, messageId }, "Failed to mark WhatsApp message as read");
+      logger.warn(
+        { status: response.status, messageId },
+        "Failed to mark WhatsApp message as read",
+      );
     }
   }
 }
