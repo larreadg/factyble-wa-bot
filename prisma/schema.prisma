@@ -1,0 +1,141 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+}
+
+model Empresa {
+  id                Int      @id @default(autoincrement())
+  ruc               String   @unique
+  razonSocial       String
+  fechaCreacion     DateTime @default(now())
+  fechaModificacion DateTime @updatedAt
+
+  contactos Contacto[]
+}
+
+model Contacto {
+  id                Int      @id @default(autoincrement())
+  empresaId         Int
+  numeroTelefono    String   @unique
+  whatsappId        String?  @unique
+  nombre            String?
+  activo            Boolean  @default(true)
+  fechaCreacion     DateTime @default(now())
+  fechaModificacion DateTime @updatedAt
+
+  empresa        Empresa        @relation(fields: [empresaId], references: [id])
+  conversaciones Conversacion[]
+
+  @@index([empresaId])
+}
+
+enum EstadoConversacion {
+  ABIERTA
+  CERRADA
+}
+
+// El índice único parcial (contactoId) WHERE estado = 'ABIERTA' no es representable
+// en el DSL de Prisma para MySQL: se implementa en la migración con una columna
+// generada + índice único (ver migration.sql). Si este modelo cambia, preservar
+// esa columna/índice manualmente en la nueva migración.
+model Conversacion {
+  id                 Int                @id @default(autoincrement())
+  contactoId         Int
+  estado             EstadoConversacion @default(ABIERTA)
+  fechaInicio        DateTime
+  fechaUltimoMensaje DateTime?
+  fechaCierre        DateTime?
+  fechaCreacion      DateTime           @default(now())
+  fechaModificacion  DateTime           @updatedAt
+
+  // onUpdate: Restrict porque contactoId es columna base de la generada
+  // contactoIdAbierta (ver arriba); MySQL prohibe ON UPDATE CASCADE en ese caso.
+  contacto Contacto              @relation(fields: [contactoId], references: [id], onUpdate: Restrict)
+  mensajes Mensaje[]
+  sesion   SesionConversacional?
+
+  @@index([contactoId])
+  @@index([estado])
+  @@index([fechaUltimoMensaje])
+}
+
+enum DireccionMensaje {
+  ENTRANTE
+  SALIENTE
+}
+
+enum TipoMensaje {
+  TEXTO
+  AUDIO
+  IMAGEN
+  DOCUMENTO
+}
+
+enum EstadoMensaje {
+  RECIBIDO
+  PENDIENTE
+  ENVIADO
+  ENTREGADO
+  LEIDO
+  FALLIDO
+}
+
+model Mensaje {
+  id                Int              @id @default(autoincrement())
+  conversacionId    Int
+  whatsappMensajeId String?          @unique
+  direccion         DireccionMensaje
+  tipo              TipoMensaje
+  contenidoTexto    String?          @db.Text
+  estado            EstadoMensaje
+  fechaMensaje      DateTime
+  fechaCreacion     DateTime         @default(now())
+  fechaModificacion DateTime         @updatedAt
+
+  conversacion          Conversacion           @relation(fields: [conversacionId], references: [id])
+  archivo               MensajeArchivo?
+  sesionesUltimoMensaje SesionConversacional[]
+
+  @@index([conversacionId])
+  @@index([estado])
+  @@index([fechaMensaje])
+  @@index([conversacionId, fechaMensaje])
+}
+
+model MensajeArchivo {
+  id                Int      @id @default(autoincrement())
+  mensajeId         Int      @unique
+  whatsappMediaId   String?
+  nombreArchivo     String?
+  mimeType          String
+  tamanioBytes      Int?
+  rutaArchivo       String?
+  transcripcion     String?  @db.Text
+  fechaCreacion     DateTime @default(now())
+  fechaModificacion DateTime @updatedAt
+
+  mensaje Mensaje @relation(fields: [mensajeId], references: [id])
+
+  @@index([whatsappMediaId])
+}
+
+model SesionConversacional {
+  id                Int       @id @default(autoincrement())
+  conversacionId    Int       @unique
+  intencionActual   String?
+  estado            String
+  datosTemporales   Json      @default("{}")
+  ultimoMensajeId   Int?
+  fechaExpiracion   DateTime?
+  fechaCreacion     DateTime  @default(now())
+  fechaModificacion DateTime  @updatedAt
+
+  conversacion  Conversacion @relation(fields: [conversacionId], references: [id])
+  ultimoMensaje Mensaje?     @relation(fields: [ultimoMensajeId], references: [id])
+
+  @@index([estado])
+  @@index([fechaExpiracion])
+}
