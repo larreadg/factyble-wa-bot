@@ -1,0 +1,17 @@
+version: '3.3'
+
+services:
+  app:
+    build: .
+    container_name: factyble-wa-bot
+    restart: always
+    env_file:
+      - .env
+    ports:
+      - "127.0.0.1:${DOCKER_APP_HOST_PORT}:${DOCKER_APP_CONTAINER_PORT}"
+    networks:
+      - simplifika-network
+
+networks:
+  simplifika-network:
+    external: true
