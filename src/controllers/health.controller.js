@@ -1,5 +1,8 @@
+const Response = require('../utils/response');
+
 const check = (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  const response = Response.success({ status: 'ok', timestamp: new Date().toISOString() });
+  res.status(response.code).json(response);
 };
 
 module.exports = { check };

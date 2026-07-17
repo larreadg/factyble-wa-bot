@@ -11,7 +11,9 @@
     "dev": "node --watch src/index.js",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "tunnel": "node scripts/devTunnel.js",
+    "test": "node --test tests/**/*.test.js",
+    "eval:parser": "node scripts/evalParser.js"
   },
   "repository": {
     "type": "git",
@@ -30,13 +32,18 @@
     "@prisma/client": "^7.8.0",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
-    "mariadb": "^3.5.3"
+    "express-validator": "^7.3.2",
+    "mariadb": "^3.5.3",
+    "openai": "^6.47.0",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
+    "cloudflared": "^0.7.1",
     "prisma": "^7.8.0"
   },
   "allowScripts": {
     "@prisma/engines@7.8.0": true,
-    "prisma@7.8.0": true
+    "prisma@7.8.0": true,
+    "cloudflared@0.7.1": true
   }
 }

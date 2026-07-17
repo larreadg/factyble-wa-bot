@@ -7,29 +7,38 @@ datasource db {
 }
 
 model Empresa {
-  id                Int      @id @default(autoincrement())
-  ruc               String   @unique
-  razonSocial       String
-  fechaCreacion     DateTime @default(now())
-  fechaModificacion DateTime @updatedAt
+  id                Int       @id @default(autoincrement())
+  ruc               String    @unique
+  razonSocial       String    @map("razon_social")
+  usuario           String
+  // Cifrado reversible (AES-256-GCM, ver src/utils/crypto.js), no un hash:
+  // se necesita descifrar para autenticarse contra la API externa.
+  password          String    @db.Text
+  token             String?   @db.Text
+  tokenExpiracion   DateTime? @map("token_expiracion")
+  fechaCreacion     DateTime  @default(now()) @map("fecha_creacion")
+  fechaModificacion DateTime  @updatedAt @map("fecha_modificacion")
 
   contactos Contacto[]
+
+  @@map("empresa")
 }
 
 model Contacto {
   id                Int      @id @default(autoincrement())
-  empresaId         Int
-  numeroTelefono    String   @unique
-  whatsappId        String?  @unique
+  empresaId         Int      @map("empresa_id")
+  numeroTelefono    String   @unique @map("numero_telefono")
+  whatsappId        String?  @unique @map("whatsapp_id")
   nombre            String?
   activo            Boolean  @default(true)
-  fechaCreacion     DateTime @default(now())
-  fechaModificacion DateTime @updatedAt
+  fechaCreacion     DateTime @default(now()) @map("fecha_creacion")
+  fechaModificacion DateTime @updatedAt @map("fecha_modificacion")
 
   empresa        Empresa        @relation(fields: [empresaId], references: [id])
   conversaciones Conversacion[]
 
   @@index([empresaId])
+  @@map("contacto")
 }
 
 enum EstadoConversacion {
@@ -37,22 +46,22 @@ enum EstadoConversacion {
   CERRADA
 }
 
-// El índice único parcial (contactoId) WHERE estado = 'ABIERTA' no es representable
+// El índice único parcial (contacto_id) WHERE estado = 'ABIERTA' no es representable
 // en el DSL de Prisma para MySQL: se implementa en la migración con una columna
 // generada + índice único (ver migration.sql). Si este modelo cambia, preservar
 // esa columna/índice manualmente en la nueva migración.
 model Conversacion {
   id                 Int                @id @default(autoincrement())
-  contactoId         Int
+  contactoId         Int                @map("contacto_id")
   estado             EstadoConversacion @default(ABIERTA)
-  fechaInicio        DateTime
-  fechaUltimoMensaje DateTime?
-  fechaCierre        DateTime?
-  fechaCreacion      DateTime           @default(now())
-  fechaModificacion  DateTime           @updatedAt
+  fechaInicio        DateTime           @map("fecha_inicio")
+  fechaUltimoMensaje DateTime?          @map("fecha_ultimo_mensaje")
+  fechaCierre        DateTime?          @map("fecha_cierre")
+  fechaCreacion      DateTime           @default(now()) @map("fecha_creacion")
+  fechaModificacion  DateTime           @updatedAt @map("fecha_modificacion")
 
-  // onUpdate: Restrict porque contactoId es columna base de la generada
-  // contactoIdAbierta (ver arriba); MySQL prohibe ON UPDATE CASCADE en ese caso.
+  // onUpdate: Restrict porque contacto_id es columna base de la generada
+  // contacto_id_abierta (ver arriba); MySQL prohibe ON UPDATE CASCADE en ese caso.
   contacto Contacto              @relation(fields: [contactoId], references: [id], onUpdate: Restrict)
   mensajes Mensaje[]
   sesion   SesionConversacional?
@@ -60,6 +69,7 @@ model Conversacion {
   @@index([contactoId])
   @@index([estado])
   @@index([fechaUltimoMensaje])
+  @@map("conversacion")
 }
 
 enum DireccionMensaje {
@@ -85,15 +95,15 @@ enum EstadoMensaje {
 
 model Mensaje {
   id                Int              @id @default(autoincrement())
-  conversacionId    Int
-  whatsappMensajeId String?          @unique
+  conversacionId    Int              @map("conversacion_id")
+  whatsappMensajeId String?          @unique @map("whatsapp_mensaje_id")
   direccion         DireccionMensaje
   tipo              TipoMensaje
-  contenidoTexto    String?          @db.Text
+  contenidoTexto    String?          @map("contenido_texto") @db.Text
   estado            EstadoMensaje
-  fechaMensaje      DateTime
-  fechaCreacion     DateTime         @default(now())
-  fechaModificacion DateTime         @updatedAt
+  fechaMensaje      DateTime         @map("fecha_mensaje")
+  fechaCreacion     DateTime         @default(now()) @map("fecha_creacion")
+  fechaModificacion DateTime         @updatedAt @map("fecha_modificacion")
 
   conversacion          Conversacion           @relation(fields: [conversacionId], references: [id])
   archivo               MensajeArchivo?
@@ -103,39 +113,43 @@ model Mensaje {
   @@index([estado])
   @@index([fechaMensaje])
   @@index([conversacionId, fechaMensaje])
+  @@map("mensaje")
 }
 
 model MensajeArchivo {
   id                Int      @id @default(autoincrement())
-  mensajeId         Int      @unique
-  whatsappMediaId   String?
-  nombreArchivo     String?
-  mimeType          String
-  tamanioBytes      Int?
-  rutaArchivo       String?
+  mensajeId         Int      @unique @map("mensaje_id")
+  whatsappMediaId   String?  @map("whatsapp_media_id")
+  nombreArchivo     String?  @map("nombre_archivo")
+  mimeType          String   @map("mime_type")
+  tamanioBytes      Int?     @map("tamanio_bytes")
+  rutaArchivo       String?  @map("ruta_archivo")
   transcripcion     String?  @db.Text
-  fechaCreacion     DateTime @default(now())
-  fechaModificacion DateTime @updatedAt
+  fechaCreacion     DateTime @default(now()) @map("fecha_creacion")
+  fechaModificacion DateTime @updatedAt @map("fecha_modificacion")
 
   mensaje Mensaje @relation(fields: [mensajeId], references: [id])
 
   @@index([whatsappMediaId])
+  @@map("mensaje_archivo")
 }
 
 model SesionConversacional {
   id                Int       @id @default(autoincrement())
-  conversacionId    Int       @unique
-  intencionActual   String?
+  conversacionId    Int       @unique @map("conversacion_id")
+  intencionActual   String?   @map("intencion_actual")
+  operacionActiva   String?   @map("operacion_activa")
   estado            String
-  datosTemporales   Json      @default("{}")
-  ultimoMensajeId   Int?
-  fechaExpiracion   DateTime?
-  fechaCreacion     DateTime  @default(now())
-  fechaModificacion DateTime  @updatedAt
+  datosTemporales   Json      @default("{}") @map("datos_temporales")
+  ultimoMensajeId   Int?      @map("ultimo_mensaje_id")
+  fechaExpiracion   DateTime? @map("fecha_expiracion")
+  fechaCreacion     DateTime  @default(now()) @map("fecha_creacion")
+  fechaModificacion DateTime  @updatedAt @map("fecha_modificacion")
 
   conversacion  Conversacion @relation(fields: [conversacionId], references: [id])
   ultimoMensaje Mensaje?     @relation(fields: [ultimoMensajeId], references: [id])
 
   @@index([estado])
   @@index([fechaExpiracion])
+  @@map("sesion_conversacional")
 }

@@ -19,13 +19,22 @@ No test suite exists yet.
 
 ## Architecture
 
-Layered request flow: `src/routes/*` → `src/controllers/*` → `src/services/*`. Routes only wire paths to controller handlers; controllers handle req/res; business logic belongs in services (currently empty — this is where WhatsApp message handling, invoice logic, etc. should go as they're built).
+Layered request flow: `src/routes/*` → `src/validators/*` (express-validator) → `src/controllers/*` → `src/services/*`. Routes only wire paths to validators/controller handlers; controllers handle req/res; business logic belongs in services (currently empty — this is where WhatsApp message handling, invoice logic, etc. should go as they're built).
 
 - `src/index.js` — entrypoint; creates the Express app, applies `express.json()`, mounts `src/routes`, starts listening on `env.PORT`.
 - `src/routes/index.js` — aggregates and re-exports all route modules; add new route files here.
 - `src/utils/env.js` — the only place `dotenv` is loaded (`require('dotenv').config()`); re-exports a plain object of named env vars. Import env vars from here rather than reading `process.env` directly elsewhere.
 - `src/utils/logger.js` — minimal timestamped console logger (`info`/`warn`/`error`). No external logging library is used.
 - `src/utils/prisma.js` — the single shared `PrismaClient` instance, wired with the MariaDB driver adapter (see below); import this rather than instantiating `PrismaClient` elsewhere.
+
+## API conventions
+
+- **Input validation**: every REST endpoint that accepts a body/query/params must validate input with [`express-validator`](https://express-validator.github.io/), not manual `if (!field)` checks in the controller. Pattern (see `src/validators/empresa.validator.js`, `src/validators/contacto.validator.js`):
+  1. Write a `src/validators/<resource>.validator.js` exporting an array of `express-validator` chains per action (e.g. `create`), using `body()`/`query()`/`param()`.
+  2. Wire it into the route as `router.post('/path', ...otherMiddleware, resourceValidator.create, validate, resourceController.create)` — `src/middlewares/validate.middleware.js` runs `validationResult` and short-circuits with a `400` `Response.error(...)` (see below) if there are errors, so it must come right after the validator chain and before the controller.
+  3. Controllers can then destructure `req.body`/`req.query`/`req.params` directly (no `|| {}` guards) — validation has already guaranteed required fields are present.
+- **Response envelope**: every JSON response (success or error) must be built with the `Response` class in `src/utils/response.js` — never `res.json(...)` with an ad-hoc shape. Use `Response.success(data, message, code)` / `Response.error(message, code, data)`, then `res.status(response.code).json(response)`. This applies to controllers and to middlewares that short-circuit a request (e.g. `apiKey.middleware.js`, `validate.middleware.js`).
+  - Exception: `src/controllers/webhook.controller.js` talks to Meta's webhook contract, which requires a raw text/status reply (the `hub.challenge` echo, bare `200`/`403`) — it does not use the `Response` envelope.
 
 ## Prisma / MySQL specifics (Prisma 7)
 
@@ -37,6 +46,7 @@ Prisma 7 changed how the datasource URL is configured — this project's setup d
 - Prisma 7's query engine (`engineType: "client"`) no longer talks to the database directly from a bare `DATABASE_URL` — it requires a driver adapter passed to the `PrismaClient` constructor, or it throws `PrismaClientConstructorValidationError`. For MySQL that's `@prisma/adapter-mariadb` + the `mariadb` driver package (both in `dependencies`); `src/utils/prisma.js` builds `new PrismaMariaDb(DATABASE_URL)` and passes it as `{ adapter }`. `new PrismaClient()` with no args also fails now — always pass at least `{}` (or the adapter object).
 - MySQL has no declarative "partial unique index" (`WHERE` clause on an index). `Conversacion` needs at most one `ABIERTA` conversation per `contactoId` — this is implemented in the migration SQL as a `STORED GENERATED` column (`NULL` unless `estado = 'ABIERTA'`) plus a plain `UNIQUE` index on that column, since MySQL treats multiple `NULL`s in a unique index as distinct. This isn't representable in `schema.prisma`, so if the `Conversacion` model changes, that generated column/index must be re-added by hand in the new migration's SQL.
 - `prisma/schema.prisma` defines the MVP model: `Empresa`, `Contacto`, `Conversacion`, `Mensaje`, `MensajeArchivo`, `SesionConversacional`. Run `npm run prisma:migrate` after editing it.
+- **DB naming convention: snake_case in MySQL, camelCase in Prisma/JS.** Model and field names in `schema.prisma` stay PascalCase/camelCase (so `prisma.mensajeArchivo.create(...)`, `registro.razonSocial`, etc. read naturally in JS) — but every model has `@@map("snake_case_table_name")` and every multi-word field has `@map("snake_case_column_name")` so the actual MySQL tables/columns are snake_case (e.g. table `mensaje_archivo` with column `whatsapp_media_id`, table `sesion_conversacional`). When adding a new model or field, add the matching `@@map`/`@map` up front — don't let a table or column land in the DB as bare concatenated camelCase (e.g. `mensajearchivo`).
 
 ## Environment variables
 
