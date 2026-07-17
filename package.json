@@ -12,6 +12,7 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "tunnel": "node scripts/devTunnel.js",
+    "webhook:update": "node scripts/updateWebhookUrl.js",
     "test": "node --test tests/**/*.test.js",
     "eval:parser": "node scripts/evalParser.js"
   },

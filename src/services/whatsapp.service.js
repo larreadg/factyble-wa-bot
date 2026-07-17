@@ -204,6 +204,33 @@ const downloadMedia = async (mediaId) => {
   return { buffer: Buffer.from(arrayBuffer), mimeType };
 };
 
+// Sobrescribe la callback URL del webhook a nivel de WABA (override_callback_uri),
+// que es la forma soportada de registrar/actualizar por API a qué URL manda Meta los
+// eventos, sin pasar por el Meta App Dashboard.
+const updateWebhookUrl = async (webhookUrl) => {
+  const url = `${GRAPH_BASE_URL}/${env.WHATSAPP_API_VERSION}/${env.WHATSAPP_BUSINESS_ACCOUNT_ID}/subscribed_apps`;
+
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${env.WHATSAPP_ACCESS_TOKEN}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      override_callback_uri: webhookUrl,
+      verify_token: env.WHATSAPP_VERIFY_TOKEN,
+    }),
+  });
+
+  const data = await res.json();
+
+  if (!res.ok) {
+    throw new Error(`Meta API respondió ${res.status}: ${JSON.stringify(data)}`);
+  }
+
+  return data;
+};
+
 // Verifica la firma HMAC-SHA256 (header X-Hub-Signature-256) que Meta agrega a cada
 // entrega de webhook, calculada sobre el cuerpo crudo de la request (ver
 // index.js -> express.json({ verify }) que expone req.rawBody).
@@ -227,5 +254,6 @@ module.exports = {
   enviarMenuPrincipal,
   uploadMedia,
   downloadMedia,
+  updateWebhookUrl,
   verifySignature,
 };

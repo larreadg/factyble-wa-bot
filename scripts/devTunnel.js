@@ -2,36 +2,13 @@ const fs = require('fs');
 const { bin, install, Tunnel } = require('cloudflared');
 const env = require('../src/utils/env');
 const logger = require('../src/utils/logger');
+const whatsappService = require('../src/services/whatsapp.service');
 
 const TUNNEL_SETTLE_MS = 5000;
 const WEBHOOK_UPDATE_RETRIES = 4;
 const WEBHOOK_UPDATE_RETRY_DELAY_MS = 4000;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-const updateWhatsappWebhook = async (webhookUrl) => {
-  const endpoint = `https://graph.facebook.com/${env.WHATSAPP_API_VERSION}/${env.WHATSAPP_BUSINESS_ACCOUNT_ID}/subscribed_apps`;
-
-  const response = await fetch(endpoint, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${env.WHATSAPP_ACCESS_TOKEN}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      override_callback_uri: webhookUrl,
-      verify_token: env.WHATSAPP_VERIFY_TOKEN,
-    }),
-  });
-
-  const data = await response.json();
-
-  if (!response.ok) {
-    throw new Error(`Meta API respondió ${response.status}: ${JSON.stringify(data)}`);
-  }
-
-  return data;
-};
 
 // Un túnel "quick" de trycloudflare.com puede tardar unos segundos en propagarse
 // globalmente después de emitir la URL; si Meta intenta verificar el callback
@@ -42,7 +19,7 @@ const updateWhatsappWebhookWithRetry = async (webhookUrl) => {
 
   for (let attempt = 1; attempt <= WEBHOOK_UPDATE_RETRIES; attempt += 1) {
     try {
-      await updateWhatsappWebhook(webhookUrl);
+      await whatsappService.updateWebhookUrl(webhookUrl);
       return;
     } catch (err) {
       if (attempt === WEBHOOK_UPDATE_RETRIES) throw err;
