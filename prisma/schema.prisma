@@ -19,7 +19,8 @@ model Empresa {
   fechaCreacion     DateTime  @default(now()) @map("fecha_creacion")
   fechaModificacion DateTime  @updatedAt @map("fecha_modificacion")
 
-  contactos Contacto[]
+  contactos  Contacto[]
+  documentos Documento[]
 
   @@map("empresa")
 }
@@ -152,4 +153,57 @@ model SesionConversacional {
   @@index([estado])
   @@index([fechaExpiracion])
   @@map("sesion_conversacional")
+}
+
+enum TipoDocumento {
+  FACTURA
+  NOTA_CREDITO
+}
+
+// Ver tabla de estados en la doc de la API de facturación: GENERADO/FIRMANDO son
+// transitorios y no llegan a verse acá; FIRMADO es el estado justo tras /simple
+// (pendiente de envío a SIFEN por el cron del backend de facturación); APROBADO/
+// RECHAZADO/ERROR son los estados finales que el bot espera antes de avisarle al
+// cliente; CANCELADO es el resultado de /simple/cancelar.
+enum EstadoSifenDocumento {
+  GENERADO
+  FIRMANDO
+  FIRMADO
+  ENCOLADO
+  ENVIADO
+  APROBADO
+  RECHAZADO
+  ERROR
+  CANCELADO
+}
+
+// Registro local de cada factura/nota de crédito emitida (o cancelada) por el bot.
+// numeroTelefono guarda el identificador de WhatsApp del contacto directamente acá
+// (en vez de resolverlo vía Contacto/Conversacion) para que el servicio que actualiza
+// estadoSifen en bulk (POST /documento/bulk-update) pueda enviarle el PDF al cliente
+// sin recorrer el resto del modelo.
+model Documento {
+  id                        Int                   @id @default(autoincrement())
+  empresaId                 Int                   @map("empresa_id")
+  numeroTelefono            String                @map("numero_telefono")
+  tipo                      TipoDocumento
+  cdc                       String                @unique @db.VarChar(44)
+  pdfNombre                 String?               @map("pdf_nombre")
+  numeroDocumentoFormateado String?               @map("numero_documento_formateado")
+  estadoSifen               EstadoSifenDocumento? @map("estado_sifen")
+  sifenEstadoMensaje        String?               @map("sifen_estado_mensaje") @db.Text
+  // Cuándo se le avisó al cliente el resultado final (APROBADO/RECHAZADO/ERROR). Null =
+  // pendiente de avisar. Evita reenviar el PDF/mensaje si bulk-update recibe el mismo
+  // cdc más de una vez (reintentos del backend de facturación) y hace que el aviso sea
+  // autocontenido: se re-evalúa toda la tabla en cada llamada, no solo el batch recibido.
+  notificadoEn              DateTime?             @map("notificado_en")
+  fechaCreacion             DateTime              @default(now()) @map("fecha_creacion")
+  fechaModificacion         DateTime              @updatedAt @map("fecha_modificacion")
+
+  empresa Empresa @relation(fields: [empresaId], references: [id])
+
+  @@index([empresaId])
+  @@index([estadoSifen])
+  @@index([estadoSifen, notificadoEn])
+  @@map("documento")
 }

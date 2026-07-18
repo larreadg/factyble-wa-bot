@@ -66,8 +66,11 @@ test('emitirNotaCredito: envía exactamente {cdc, items}, sin idempotencyKey ni 
   const emitirSpy = t.mock.method(facturaApiService, 'emitirNotaCreditoSimple', async () => ({
     id: 10,
     numero_nota_credito: '001-001-0000045',
+    numeroNotaCreditoFormateada: '001-001-0000045',
     cdc: CDC,
-    estado_sifen: 'APROBADO',
+    pdfNombre: 'nc-uuid.pdf',
+    estado_sifen: 'FIRMADO',
+    sifen_estado_mensaje: null,
     linkqr: 'https://ejemplo.com/qr',
   }));
 
@@ -79,8 +82,10 @@ test('emitirNotaCredito: envía exactamente {cdc, items}, sin idempotencyKey ni 
   assert.deepEqual(payloadEnviado.items, [{ cantidad: 2, precioUnitario: 50000, descripcion: 'Silla', tasa: '10%' }]);
 
   assert.equal(resultado.numero, '001-001-0000045');
+  assert.equal(resultado.numeroFormateado, '001-001-0000045');
   assert.equal(resultado.cdc, CDC);
-  assert.equal(resultado.estadoSifen, 'APROBADO');
+  assert.equal(resultado.pdfNombre, 'nc-uuid.pdf');
+  assert.equal(resultado.estadoSifen, 'FIRMADO');
   assert.equal(resultado.linkQr, 'https://ejemplo.com/qr');
 });
 

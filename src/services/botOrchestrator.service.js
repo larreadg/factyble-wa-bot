@@ -5,7 +5,6 @@ const {
   construirMensajeTotalEncontrado,
   construirMensajeMontoExcedeTotal,
   construirResumenConfirmacionNC,
-  construirMensajeNotaCreditoEmitida,
 } = require('../utils/notaCreditoPresentacion');
 const {
   construirResumenConfirmacionCancelacion,
@@ -31,6 +30,7 @@ const notaCreditoBorradorService = require('./notaCreditoBorrador.service');
 const notaCreditoEmisionService = require('./notaCreditoEmision.service');
 const cancelacionParserService = require('./cancelacionParser.service');
 const cancelacionDocumentoService = require('./cancelacionDocumento.service');
+const documentoService = require('./documento.service');
 const transcripcionService = require('./transcripcion.service');
 const { OpenAIServiceError } = require('./openai.errors');
 const { FacturaApiError } = require('./facturaApi.errors');
@@ -121,41 +121,6 @@ const enviarMenuPrincipalYRegistrar = async (conversacion, contacto) => {
   });
 };
 
-const enviarPdfFactura = async (conversacion, contacto, resultado) => {
-  let estado = 'PENDIENTE';
-  let whatsappMensajeId = null;
-
-  try {
-    const respuesta = await whatsappService.sendDocumentMessage(contacto.numeroTelefono, {
-      id: resultado.pdfMediaId,
-      filename: resultado.nombreArchivo || 'factura.pdf',
-      caption: 'Factura electrónica',
-    });
-    whatsappMensajeId = respuesta?.messages?.[0]?.id || null;
-    estado = 'ENVIADO';
-  } catch (error) {
-    logger.error('Error enviando PDF de factura por WhatsApp', safeError(error));
-    estado = 'FALLIDO';
-  }
-
-  const mensajeSaliente = await mensajeService.registrarSaliente({
-    conversacionId: conversacion.id,
-    tipo: 'DOCUMENTO',
-    contenidoTexto: null,
-    estado,
-    whatsappMensajeId,
-  });
-
-  await mensajeService.crearArchivo({
-    mensajeId: mensajeSaliente.id,
-    whatsappMediaId: resultado.pdfMediaId || null,
-    nombreArchivo: resultado.nombreArchivo || 'factura.pdf',
-    mimeType: 'application/pdf',
-    tamanioBytes: resultado.pdfTamanioBytes || null,
-    rutaArchivo: resultado.pdfRutaInterna || null,
-  });
-};
-
 // Palabras que indican que el usuario quiere anular por completo un documento ya
 // emitido (factura o NC), a diferencia de emitir una nota de crédito (acreditar un
 // monto contra una factura que sigue vigente). PATRON_PARCIAL detecta cuando el
@@ -173,6 +138,18 @@ const detectarIntentoCancelacionDocumento = (texto) => {
   if (PATRON_DOCUMENTO_EMITIDO.test(texto) || cdc || candidatoInvalido) return 'CANCELACION';
 
   return 'NINGUNO';
+};
+
+// Best-effort: para cuando esto se llama, el documento ya fue emitido y firmado en
+// SIFEN (irreversible desde acá), así que una falla al persistir la fila local (ej.
+// reintento con el mismo cdc por idempotencyKey, o un error transitorio de DB) no debe
+// impedir que la sesión llegue a COMPLETADA ni que se avise al cliente.
+const registrarDocumentoEmitido = async (datos) => {
+  try {
+    await documentoService.registrarEmision(datos);
+  } catch (error) {
+    logger.error('Error registrando el documento emitido', { ...safeError(error), cdc: datos.cdc, tipo: datos.tipo });
+  }
 };
 
 const construirMensajeDatosRechazados = (detalle) =>
@@ -227,20 +204,28 @@ const confirmarYEmitir = async ({ contacto, conversacion, sesion, borrador }) =>
     return;
   }
 
+  await registrarDocumentoEmitido({
+    empresaId: contacto.empresa.id,
+    numeroTelefono: contacto.numeroTelefono,
+    tipo: 'FACTURA',
+    cdc: resultado.cdc,
+    pdfNombre: resultado.pdfNombre,
+    numeroDocumentoFormateado: resultado.numeroFormateado,
+    estadoSifen: resultado.estadoSifen,
+    sifenEstadoMensaje: resultado.sifenEstadoMensaje,
+  });
+
   const datosCompletados = {
     ...datosConKey,
     resultadoEmision: {
       documentoId: resultado.documentoId ?? null,
       numero: resultado.numero ?? null,
-      pdfMediaId: resultado.pdfMediaId ?? null,
+      cdc: resultado.cdc ?? null,
     },
   };
 
   await sesionConversacionalService.transicionar(sesion.id, [ESTADOS_SESION.PROCESANDO], ESTADOS_SESION.COMPLETADA, datosCompletados);
-
-  if (resultado.pdfMediaId) {
-    await enviarPdfFactura(conversacion, contacto, resultado);
-  }
+  await responderYRegistrar(conversacion, contacto, MENSAJES.FACTURA_PENDIENTE_APROBACION);
 };
 
 // ---- Flujo de cancelación de documentos (factura o nota de crédito ya emitidas) ----
@@ -706,9 +691,20 @@ const confirmarYEmitirNotaCredito = async ({ contacto, conversacion, sesion, bor
     return;
   }
 
+  await registrarDocumentoEmitido({
+    empresaId: contacto.empresa.id,
+    numeroTelefono: contacto.numeroTelefono,
+    tipo: 'NOTA_CREDITO',
+    cdc: resultado.cdc,
+    pdfNombre: resultado.pdfNombre,
+    numeroDocumentoFormateado: resultado.numeroFormateado,
+    estadoSifen: resultado.estadoSifen,
+    sifenEstadoMensaje: resultado.sifenEstadoMensaje,
+  });
+
   const datosCompletados = { ...borrador, resultadoEmision: resultado };
   await sesionConversacionalService.transicionar(sesion.id, [ESTADOS_SESION.PROCESANDO], ESTADOS_SESION.COMPLETADA, datosCompletados);
-  await responderYRegistrar(conversacion, contacto, construirMensajeNotaCreditoEmitida(resultado));
+  await responderYRegistrar(conversacion, contacto, MENSAJES.NC_PENDIENTE_APROBACION);
 };
 
 // Único punto de entrada para cualquier mensaje de texto mientras operacionActiva ===
@@ -973,8 +969,32 @@ const manejarAudioEntrante = async ({ contacto, conversacion, sesion, mensajeEnt
   await manejarSesion({ contacto, conversacion, sesion, texto });
 };
 
+// Las reacciones (emoji sobre un mensaje previo) llegan en value.messages[] como un
+// evento propio (type: 'reaction', con id distinto al del mensaje reaccionado), así
+// que no las deduplica registrarEntrante ni encajan en ningún tipo de TIPO_MENSAJE_POR_
+// WHATSAPP. Al no dejar burbuja visible en el chat de WhatsApp, si cayeran en el
+// fallback de "tipo no soportado" el usuario vería al bot reenviar el menú principal
+// sin haber escrito nada. Se ignoran por completo: no ameritan ninguna respuesta.
 const procesarMensajeEntrante = async (waMessage) => {
+  if (waMessage.type === 'reaction') {
+    logger.info('Reacción de WhatsApp ignorada');
+    return;
+  }
+
   const numeroTelefono = normalizarTelefono(waMessage.from);
+  const fechaMensaje = waMessage.timestamp ? new Date(Number(waMessage.timestamp) * 1000) : new Date();
+
+  // Log incondicional (no solo en ramas de error/duplicado/sin-permisos) para poder
+  // diagnosticar desde los logs del contenedor qué llegó realmente y cuándo lo mandó
+  // Meta (waMessage.timestamp) vs. cuándo lo procesamos nosotros (retraso = posible
+  // reentrega/replay del webhook, ej. tras cambiar override_callback_uri).
+  logger.info('Mensaje entrante de WhatsApp', {
+    type: waMessage.type,
+    id: waMessage.id,
+    from: numeroTelefono,
+    timestampMeta: fechaMensaje.toISOString(),
+  });
+
   const contacto = await contactoService.findContactoActivoByNumero(numeroTelefono);
 
   if (!contacto) {
@@ -987,7 +1007,6 @@ const procesarMensajeEntrante = async (waMessage) => {
 
   const tipo = TIPO_MENSAJE_POR_WHATSAPP[waMessage.type] || 'TEXTO';
   const textoEntrante = waMessage.type === 'text' ? waMessage.text?.body ?? null : null;
-  const fechaMensaje = waMessage.timestamp ? new Date(Number(waMessage.timestamp) * 1000) : new Date();
 
   const { mensaje: mensajeEntrante, duplicado } = await mensajeService.registrarEntrante({
     conversacionId: conversacion.id,

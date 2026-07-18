@@ -1,6 +1,7 @@
 const facturaApiService = require('./facturaApi.service');
 const { obtenerToken, autenticarYGuardar } = require('./facturacionAuth.service');
 const { FacturaApiError } = require('./facturaApi.errors');
+const documentoService = require('./documento.service');
 
 // Igual patrón que notaCreditoEmision.service.js: si el token cacheado es rechazado,
 // reautentica una única vez y reintenta antes de propagar el error.
@@ -30,7 +31,9 @@ const mapearResultado = (data) => ({
  */
 const cancelarFactura = async (empresa, cdc) => {
   const data = await conReintentoAuth(empresa, (token) => facturaApiService.cancelarFacturaSimple(token, { cdc }));
-  return mapearResultado(data);
+  const resultado = mapearResultado(data);
+  await documentoService.registrarCancelacion(cdc, { estadoSifen: resultado.estadoSifen, sifenEstadoMensaje: resultado.mensajeRespuesta });
+  return resultado;
 };
 
 /**
@@ -38,7 +41,9 @@ const cancelarFactura = async (empresa, cdc) => {
  */
 const cancelarNotaCredito = async (empresa, cdc) => {
   const data = await conReintentoAuth(empresa, (token) => facturaApiService.cancelarNotaCreditoSimple(token, { cdc }));
-  return mapearResultado(data);
+  const resultado = mapearResultado(data);
+  await documentoService.registrarCancelacion(cdc, { estadoSifen: resultado.estadoSifen, sifenEstadoMensaje: resultado.mensajeRespuesta });
+  return resultado;
 };
 
 module.exports = { cancelarFactura, cancelarNotaCredito };

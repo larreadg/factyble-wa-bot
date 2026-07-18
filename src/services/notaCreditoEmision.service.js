@@ -26,8 +26,10 @@ const conReintentoAuth = async (empresa, llamarConToken) => {
 const consultarTotalFactura = (empresa, cdc) => conReintentoAuth(empresa, (token) => facturaApiService.consultarTotalFactura(token, cdc));
 
 /**
+ * No descarga ni envía el PDF: igual que la factura, queda FIRMADA pero pendiente de
+ * aprobación en SIFEN (ver comentario en facturaEmision.service.js).
  * @param {{ empresa: object, cdc: string, items: Array<{descripcion: string, cantidad: number, precioUnitario: number, tasa: '0%'|'5%'|'10%'}> }} params
- * @returns {Promise<{ documentoId: string, numero: string, cdc: string, estadoSifen: string, linkQr: string }>}
+ * @returns {Promise<{ documentoId: string, numero: string, numeroFormateado: string, cdc: string, pdfNombre: string, estadoSifen: string, sifenEstadoMensaje: string, linkQr: string }>}
  */
 const emitirNotaCredito = async ({ empresa, cdc, items }) => {
   // Body exacto {cdc, items}, sin campos extra (ni idempotencyKey: el endpoint no lo
@@ -43,8 +45,11 @@ const emitirNotaCredito = async ({ empresa, cdc, items }) => {
   return {
     documentoId: data?.id ?? null,
     numero: data?.numero_nota_credito ?? null,
+    numeroFormateado: data?.numeroNotaCreditoFormateada ?? null,
     cdc: data?.cdc ?? null,
+    pdfNombre: data?.pdfNombre ?? null,
     estadoSifen: data?.estado_sifen ?? null,
+    sifenEstadoMensaje: data?.sifen_estado_mensaje ?? null,
     linkQr: data?.linkqr ?? null,
   };
 };

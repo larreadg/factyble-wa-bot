@@ -12,6 +12,7 @@ const notaCreditoParserService = require('../../src/services/notaCreditoParser.s
 const notaCreditoEmisionService = require('../../src/services/notaCreditoEmision.service');
 const cancelacionParserService = require('../../src/services/cancelacionParser.service');
 const cancelacionDocumentoService = require('../../src/services/cancelacionDocumento.service');
+const documentoService = require('../../src/services/documento.service');
 const { FacturaApiError } = require('../../src/services/facturaApi.errors');
 const { borradorVacio, construirBorrador } = require('../../src/services/facturaBorrador.service');
 const { borradorVacio: borradorVacioNC, construirBorrador: construirBorradorNC } = require('../../src/services/notaCreditoBorrador.service');
@@ -116,7 +117,15 @@ const setupMundo = (
     return { messages: [{ id: `wamid.menu.${mensajeIdSeq}` }] };
   });
 
-  return { sesion, salientes };
+  // Toca Prisma real si no se mockea: cualquier test que llegue a una emisión exitosa
+  // (factura o NC) dispara este registro (ver botOrchestrator.service.js).
+  const documentosRegistrados = [];
+  t.mock.method(documentoService, 'registrarEmision', async (data) => {
+    documentosRegistrados.push(data);
+    return { id: documentosRegistrados.length, ...data };
+  });
+
+  return { sesion, salientes, documentosRegistrados };
 };
 
 const mensajeTexto = (body, overrides = {}) => ({
@@ -297,6 +306,72 @@ test('caso 9: accion=CONFIRMAR en ESPERANDO_CONFIRMACION intenta la transición 
   assert.equal(sesion.estado, ESTADOS_SESION.ERROR);
   assert.ok(textoEnviado(salientes).includes(MENSAJES.PROCESANDO_FACTURA));
   assert.ok(textoEnviado(salientes).includes(MENSAJES.ERROR_EMISION));
+});
+
+test('emisión exitosa: registra el Documento y avisa que la factura quedó pendiente de aprobación, sin enviar PDF', async (t) => {
+  const borrador = construirBorrador(
+    { cliente: { nombre: 'Diego Larrea', tipoDocumento: 'RUC', numeroDocumento: '5249657-0' }, condicionVenta: 'CONTADO', items: [{ descripcion: 'Borrador', cantidad: 1, precioUnitario: 5000, tasa: '10%' }] },
+    null,
+    [],
+  );
+  const { sesion, salientes, documentosRegistrados } = setupMundo(t, { sesionEstado: ESTADOS_SESION.ESPERANDO_CONFIRMACION, datosTemporales: borrador });
+  t.mock.method(facturaParserService, 'interpretar', async () => salidaParser('CONFIRMAR', facturaDesdeBorrador(borrador)));
+
+  const emitirSpy = t.mock.method(facturaEmisionService, 'emitirFactura', async () => ({
+    documentoId: 123,
+    numero: 45,
+    numeroFormateado: '001-001-0000045',
+    cdc: '01800695921001001000000012024071410238123456',
+    pdfNombre: 'b3c1-uuid.pdf',
+    estadoSifen: 'FIRMADO',
+    sifenEstadoMensaje: null,
+  }));
+  const enviarDocSpy = t.mock.method(whatsappService, 'sendDocumentMessage', async () => {
+    throw new Error('no debería llamarse: el PDF ya no se envía en esta iteración');
+  });
+
+  await botOrchestrator.procesarMensajeEntrante(mensajeTexto('si'));
+
+  assert.equal(emitirSpy.mock.callCount(), 1);
+  assert.equal(enviarDocSpy.mock.callCount(), 0);
+  assert.equal(sesion.estado, ESTADOS_SESION.COMPLETADA);
+  const textos = textoEnviado(salientes);
+  assert.ok(textos.includes(MENSAJES.PROCESANDO_FACTURA));
+  assert.ok(textos.includes(MENSAJES.FACTURA_PENDIENTE_APROBACION));
+
+  assert.equal(documentosRegistrados.length, 1);
+  assert.equal(documentosRegistrados[0].tipo, 'FACTURA');
+  assert.equal(documentosRegistrados[0].cdc, '01800695921001001000000012024071410238123456');
+  assert.equal(documentosRegistrados[0].empresaId, CONTACTO.empresa.id);
+  assert.equal(documentosRegistrados[0].numeroTelefono, CONTACTO.numeroTelefono);
+  assert.equal(documentosRegistrados[0].pdfNombre, 'b3c1-uuid.pdf');
+  assert.equal(documentosRegistrados[0].numeroDocumentoFormateado, '001-001-0000045');
+});
+
+test('si falla el registro local del Documento tras emitir, la sesión igual llega a COMPLETADA (la factura ya fue emitida en SIFEN, es irreversible)', async (t) => {
+  const borrador = construirBorrador(
+    { cliente: { nombre: 'Diego Larrea', tipoDocumento: 'RUC', numeroDocumento: '5249657-0' }, condicionVenta: 'CONTADO', items: [{ descripcion: 'Borrador', cantidad: 1, precioUnitario: 5000, tasa: '10%' }] },
+    null,
+    [],
+  );
+  const { sesion, salientes } = setupMundo(t, { sesionEstado: ESTADOS_SESION.ESPERANDO_CONFIRMACION, datosTemporales: borrador });
+  t.mock.method(facturaParserService, 'interpretar', async () => salidaParser('CONFIRMAR', facturaDesdeBorrador(borrador)));
+  t.mock.method(facturaEmisionService, 'emitirFactura', async () => ({
+    documentoId: 123,
+    numero: 45,
+    cdc: '01800695921001001000000012024071410238123456',
+    pdfNombre: 'b3c1-uuid.pdf',
+    estadoSifen: 'FIRMADO',
+  }));
+  // Sobreescribe el mock por defecto de setupMundo para simular la falla.
+  t.mock.method(documentoService, 'registrarEmision', async () => {
+    throw new Error('Unique constraint failed on cdc');
+  });
+
+  await botOrchestrator.procesarMensajeEntrante(mensajeTexto('si'));
+
+  assert.equal(sesion.estado, ESTADOS_SESION.COMPLETADA);
+  assert.ok(textoEnviado(salientes).includes(MENSAJES.FACTURA_PENDIENTE_APROBACION));
 });
 
 test('caso 10: dos confirmaciones simultáneas solo disparan una emisión', async (t) => {
@@ -626,9 +701,9 @@ const borradorNCListoParaConfirmar = () =>
     { ...borradorVacioNC(), cdc: CDC_NC, totalFactura: 550000, totalIvaFactura: 50000 },
   );
 
-test('NC: confirmar en ESPERANDO_CONFIRMACION emite la nota de crédito y muestra el resultado', async (t) => {
+test('NC: confirmar en ESPERANDO_CONFIRMACION emite la nota de crédito, la registra en Documento y avisa que quedó pendiente de aprobación', async (t) => {
   const borrador = borradorNCListoParaConfirmar();
-  const { sesion, salientes } = setupMundo(t, {
+  const { sesion, salientes, documentosRegistrados } = setupMundo(t, {
     sesionEstado: ESTADOS_SESION.ESPERANDO_CONFIRMACION,
     operacionActiva: OPERACIONES.NOTA_CREDITO,
     datosTemporales: borrador,
@@ -637,8 +712,11 @@ test('NC: confirmar en ESPERANDO_CONFIRMACION emite la nota de crédito y muestr
   const emitirSpy = t.mock.method(notaCreditoEmisionService, 'emitirNotaCredito', async () => ({
     documentoId: 1,
     numero: '001-001-0000045',
+    numeroFormateado: '001-001-0000045',
     cdc: CDC_NC,
-    estadoSifen: 'APROBADO',
+    pdfNombre: 'nc-uuid.pdf',
+    estadoSifen: 'FIRMADO',
+    sifenEstadoMensaje: null,
     linkQr: 'https://ejemplo.com/qr',
   }));
 
@@ -648,7 +726,39 @@ test('NC: confirmar en ESPERANDO_CONFIRMACION emite la nota de crédito y muestr
   assert.equal(sesion.estado, ESTADOS_SESION.COMPLETADA);
   const textos = textoEnviado(salientes);
   assert.ok(textos.includes(MENSAJES.NC_PROCESANDO));
-  assert.ok(textos.some((m) => m.includes('Nota de crédito emitida')));
+  assert.ok(textos.includes(MENSAJES.NC_PENDIENTE_APROBACION));
+
+  assert.equal(documentosRegistrados.length, 1);
+  assert.equal(documentosRegistrados[0].tipo, 'NOTA_CREDITO');
+  assert.equal(documentosRegistrados[0].cdc, CDC_NC);
+  assert.equal(documentosRegistrados[0].empresaId, CONTACTO.empresa.id);
+  assert.equal(documentosRegistrados[0].numeroTelefono, CONTACTO.numeroTelefono);
+});
+
+test('NC: si falla el registro local del Documento tras emitir, la sesión igual llega a COMPLETADA', async (t) => {
+  const borrador = borradorNCListoParaConfirmar();
+  const { sesion, salientes } = setupMundo(t, {
+    sesionEstado: ESTADOS_SESION.ESPERANDO_CONFIRMACION,
+    operacionActiva: OPERACIONES.NOTA_CREDITO,
+    datosTemporales: borrador,
+  });
+  t.mock.method(notaCreditoParserService, 'interpretar', async () => salidaParserNC('CONFIRMAR', borrador.items));
+  t.mock.method(notaCreditoEmisionService, 'emitirNotaCredito', async () => ({
+    documentoId: 1,
+    numero: '001-001-0000045',
+    cdc: CDC_NC,
+    pdfNombre: 'nc-uuid.pdf',
+    estadoSifen: 'FIRMADO',
+  }));
+  // Sobreescribe el mock por defecto de setupMundo para simular la falla.
+  t.mock.method(documentoService, 'registrarEmision', async () => {
+    throw new Error('Unique constraint failed on cdc');
+  });
+
+  await botOrchestrator.procesarMensajeEntrante(mensajeTexto('si, confirmo'));
+
+  assert.equal(sesion.estado, ESTADOS_SESION.COMPLETADA);
+  assert.ok(textoEnviado(salientes).includes(MENSAJES.NC_PENDIENTE_APROBACION));
 });
 
 test('NC: doble confirmación concurrente solo dispara una emisión', async (t) => {

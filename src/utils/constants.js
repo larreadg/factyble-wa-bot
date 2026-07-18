@@ -30,6 +30,8 @@ const MENSAJES = Object.freeze({
   CANCELACION: 'La emisión fue cancelada.',
   ERROR_EMISION: 'No pudimos completar la emisión. La operación quedó registrada para evitar una emisión duplicada.',
   PROCESANDO_FACTURA: 'Tu factura está siendo emitida...',
+  FACTURA_PENDIENTE_APROBACION:
+    'Tu factura fue generada y quedó pendiente de aprobación en SIFEN. Te voy a avisar por acá apenas tenga la respuesta.',
   SOLO_TEXTO_SOPORTADO: 'Por el momento solo puedo procesar mensajes de texto para emitir facturas.',
   AUDIO_NO_DISPONIBLE: 'No pude descargar el audio que enviaste. Probá reenviarlo o escribime el mensaje en texto.',
   AUDIO_NO_TRANSCRIBIBLE: 'No pude entender el audio que enviaste. Probá grabarlo de nuevo o escribime el mensaje en texto.',
@@ -60,6 +62,8 @@ const MENSAJES = Object.freeze({
     'No pudimos completar la emisión de la nota de crédito. La operación quedó registrada para evitar una emisión duplicada.',
   NC_CANCELACION: 'La nota de crédito fue cancelada.',
   NC_PROCESANDO: 'Tu nota de crédito está siendo emitida...',
+  NC_PENDIENTE_APROBACION:
+    'Tu nota de crédito fue generada y quedó pendiente de aprobación en SIFEN. Te voy a avisar por acá apenas tenga la respuesta.',
   NC_YA_PROCESANDO: 'La nota de crédito ya está siendo procesada. Te aviso cuando esté disponible.',
 
   // Flujo de cancelación de documentos (factura o nota de crédito ya emitidas).

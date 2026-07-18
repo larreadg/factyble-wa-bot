@@ -1,6 +1,5 @@
 const logger = require('../utils/logger');
 const facturaApiService = require('./facturaApi.service');
-const whatsappService = require('./whatsapp.service');
 const { FacturaApiError } = require('./facturaApi.errors');
 const { obtenerToken, autenticarYGuardar } = require('./facturacionAuth.service');
 
@@ -19,8 +18,12 @@ const construirPayload = ({ cliente, condicionVenta, items }) => ({
 });
 
 /**
+ * No descarga ni envía el PDF: la factura queda FIRMADA pero pendiente de aprobación
+ * en SIFEN (asíncrono, vía cron del backend de facturación), así que todavía no hay
+ * nada que mostrarle al cliente. El PDF se descarga y envía recién cuando se conoce el
+ * estado final (ver documento.service.js).
  * @param {{ empresa: object, cliente: {nombre: string, tipoDocumento: 'RUC'|'CI', numeroDocumento: string}, condicionVenta: 'CONTADO'|'CREDITO', items: Array<{descripcion: string, cantidad: number, precioUnitario: number, tasa: '0%'|'5%'|'10%'}>, totales: {subtotal: number, totalGeneral: number}, idempotencyKey: string }} params
- * @returns {Promise<{ documentoId: string, numero: string, pdfMediaId?: string, nombreArchivo?: string, pdfTamanioBytes?: number }>}
+ * @returns {Promise<{ documentoId: string, numero: string, numeroFormateado: string, cdc: string, pdfNombre: string, estadoSifen: string, sifenEstadoMensaje: string }>}
  */
 const emitirFactura = async ({ empresa, cliente, condicionVenta, items, idempotencyKey }) => {
   const payload = construirPayload({ cliente, condicionVenta, items });
@@ -42,26 +45,18 @@ const emitirFactura = async ({ empresa, cliente, condicionVenta, items, idempote
     data = await facturaApiService.emitirFacturaSimple(token, payload);
   }
 
-  const pdfNombre = data?.pdfNombre;
-  let pdfMediaId = null;
-  let pdfTamanioBytes = null;
-
-  if (pdfNombre) {
-    const pdfBuffer = await facturaApiService.descargarPdf(pdfNombre);
-    pdfTamanioBytes = pdfBuffer.length;
-
-    const media = await whatsappService.uploadMedia(pdfBuffer, pdfNombre, 'application/pdf');
-    pdfMediaId = media?.id || null;
-  } else {
+  if (!data?.pdfNombre) {
     logger.error('La API de facturación no devolvió pdfNombre', { empresaId: empresa.id, idempotencyKey });
   }
 
   return {
     documentoId: data?.id ?? null,
     numero: data?.numero_factura ?? null,
-    pdfMediaId,
-    nombreArchivo: pdfNombre || null,
-    pdfTamanioBytes,
+    numeroFormateado: data?.numeroFacturaFormateada ?? null,
+    cdc: data?.cdc ?? null,
+    pdfNombre: data?.pdfNombre ?? null,
+    estadoSifen: data?.estado_sifen ?? null,
+    sifenEstadoMensaje: data?.sifen_estado_mensaje ?? null,
   };
 };
 

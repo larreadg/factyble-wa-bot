@@ -51,15 +51,4 @@ const construirResumenConfirmacionNC = (borrador) => {
   ].join('\n');
 };
 
-const construirMensajeNotaCreditoEmitida = (resultado) =>
-  [
-    '✅ *Nota de crédito emitida*',
-    `Número: ${resultado.numero ?? '-'}`,
-    `CDC: ${abreviarCdc(resultado.cdc)}`,
-    `Estado SIFEN: ${resultado.estadoSifen ?? '-'}`,
-    resultado.linkQr ? `🔗 Consulta: ${resultado.linkQr}` : null,
-  ]
-    .filter(Boolean)
-    .join('\n');
-
-module.exports = { abreviarCdc, construirMensajeTotalEncontrado, construirMensajeMontoExcedeTotal, construirResumenConfirmacionNC, construirMensajeNotaCreditoEmitida };
+module.exports = { abreviarCdc, construirMensajeTotalEncontrado, construirMensajeMontoExcedeTotal, construirResumenConfirmacionNC };

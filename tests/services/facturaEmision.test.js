@@ -3,7 +3,6 @@ const assert = require('node:assert/strict');
 const facturaEmisionService = require('../../src/services/facturaEmision.service');
 const facturaApiService = require('../../src/services/facturaApi.service');
 const empresaService = require('../../src/services/empresa.service');
-const whatsappService = require('../../src/services/whatsapp.service');
 const { FacturaApiError } = require('../../src/services/facturaApi.errors');
 const crypto = require('../../src/utils/crypto');
 
@@ -29,16 +28,21 @@ const DATOS_FACTURA = {
 const RESPUESTA_EMISION = {
   id: 123,
   numero_factura: 45,
+  numeroFacturaFormateada: '001-001-0000045',
+  cdc: '01800695921001001000000012024071410238123456',
   pdfNombre: 'b3c1-uuid.pdf',
+  estado_sifen: 'FIRMADO',
+  sifen_estado_mensaje: null,
 };
 
-test('sin token cacheado: autentica, emite, descarga el PDF y lo sube a WhatsApp', async (t) => {
+test('sin token cacheado: autentica y emite, sin tocar WhatsApp (el PDF se envía recién cuando SIFEN aprueba)', async (t) => {
   const jwt = construirJwt({ exp: Math.floor(Date.now() / 1000) + 3600 });
   const autenticarSpy = t.mock.method(facturaApiService, 'autenticar', async () => jwt);
   const emitirSpy = t.mock.method(facturaApiService, 'emitirFacturaSimple', async () => RESPUESTA_EMISION);
-  const descargarSpy = t.mock.method(facturaApiService, 'descargarPdf', async () => Buffer.from('contenido-pdf'));
+  const descargarSpy = t.mock.method(facturaApiService, 'descargarPdf', async () => {
+    throw new Error('no debería llamarse');
+  });
   const guardarTokenSpy = t.mock.method(empresaService, 'guardarToken', async () => {});
-  const uploadSpy = t.mock.method(whatsappService, 'uploadMedia', async () => ({ id: 'media-123' }));
 
   const resultado = await facturaEmisionService.emitirFactura({ empresa: EMPRESA_SIN_TOKEN(), ...DATOS_FACTURA });
 
@@ -54,22 +58,20 @@ test('sin token cacheado: autentica, emite, descarga el PDF y lo sube a WhatsApp
   assert.equal(payloadEnviado.condicionVenta, 'CONTADO');
   assert.deepEqual(payloadEnviado.items, [{ cantidad: 1, precioUnitario: 5000, tasa: '10%', descripcion: 'Borrador' }]);
 
-  assert.equal(descargarSpy.mock.callCount(), 1);
-  assert.equal(descargarSpy.mock.calls[0].arguments[0], 'b3c1-uuid.pdf');
-  assert.equal(uploadSpy.mock.callCount(), 1);
+  assert.equal(descargarSpy.mock.callCount(), 0);
 
   assert.equal(resultado.documentoId, 123);
   assert.equal(resultado.numero, 45);
-  assert.equal(resultado.pdfMediaId, 'media-123');
-  assert.equal(resultado.nombreArchivo, 'b3c1-uuid.pdf');
-  assert.equal(resultado.pdfTamanioBytes, Buffer.from('contenido-pdf').length);
+  assert.equal(resultado.numeroFormateado, '001-001-0000045');
+  assert.equal(resultado.cdc, '01800695921001001000000012024071410238123456');
+  assert.equal(resultado.pdfNombre, 'b3c1-uuid.pdf');
+  assert.equal(resultado.estadoSifen, 'FIRMADO');
+  assert.equal(resultado.sifenEstadoMensaje, null);
 });
 
 test('cliente con cédula (CI): situacionTributaria=NO_CONTRIBUYENTE y personaDocumento=numeroDocumento', async (t) => {
   const empresa = { id: 7, usuario: 'admin@empresa.com', password: 'x', token: 'token-vigente', tokenExpiracion: new Date(Date.now() + 3600 * 1000) };
   const emitirSpy = t.mock.method(facturaApiService, 'emitirFacturaSimple', async () => RESPUESTA_EMISION);
-  t.mock.method(facturaApiService, 'descargarPdf', async () => Buffer.from('x'));
-  t.mock.method(whatsappService, 'uploadMedia', async () => ({ id: 'media-1' }));
 
   const datosConCedula = { ...DATOS_FACTURA, cliente: { nombre: 'Diego Larrea', tipoDocumento: 'CI', numeroDocumento: '5249657' } };
   await facturaEmisionService.emitirFactura({ empresa, ...datosConCedula });
@@ -85,9 +87,7 @@ test('con token cacheado vigente, no vuelve a autenticar', async (t) => {
     throw new Error('no debería reautenticar');
   });
   const emitirSpy = t.mock.method(facturaApiService, 'emitirFacturaSimple', async () => RESPUESTA_EMISION);
-  t.mock.method(facturaApiService, 'descargarPdf', async () => Buffer.from('x'));
   t.mock.method(empresaService, 'guardarToken', async () => {});
-  t.mock.method(whatsappService, 'uploadMedia', async () => ({ id: 'media-1' }));
 
   await facturaEmisionService.emitirFactura({ empresa, ...DATOS_FACTURA });
 
@@ -100,9 +100,7 @@ test('con token cacheado vencido, reautentica antes de emitir', async (t) => {
   const jwt = construirJwt({ exp: Math.floor(Date.now() / 1000) + 3600 });
   const autenticarSpy = t.mock.method(facturaApiService, 'autenticar', async () => jwt);
   const emitirSpy = t.mock.method(facturaApiService, 'emitirFacturaSimple', async () => RESPUESTA_EMISION);
-  t.mock.method(facturaApiService, 'descargarPdf', async () => Buffer.from('x'));
   t.mock.method(empresaService, 'guardarToken', async () => {});
-  t.mock.method(whatsappService, 'uploadMedia', async () => ({ id: 'media-1' }));
 
   await facturaEmisionService.emitirFactura({ empresa, ...DATOS_FACTURA });
 
@@ -121,9 +119,7 @@ test('token cacheado rechazado (401/AUTH_FAILED) reautentica una vez y reintenta
     if (token === 'token-invalido') throw new FacturaApiError('AUTH_FAILED', 'Token inválido o expirado');
     return RESPUESTA_EMISION;
   });
-  t.mock.method(facturaApiService, 'descargarPdf', async () => Buffer.from('x'));
   t.mock.method(empresaService, 'guardarToken', async () => {});
-  t.mock.method(whatsappService, 'uploadMedia', async () => ({ id: 'media-1' }));
 
   const resultado = await facturaEmisionService.emitirFactura({ empresa, ...DATOS_FACTURA });
 
@@ -149,19 +145,13 @@ test('errores de validación (400) se propagan sin reintentar la autenticación'
   assert.equal(autenticarSpy.mock.callCount(), 0);
 });
 
-test('sin pdfNombre en la respuesta, no intenta descargar ni subir nada a WhatsApp', async (t) => {
+test('sin pdfNombre en la respuesta, igual devuelve el resto de los datos', async (t) => {
   const empresa = { id: 6, usuario: 'admin@empresa.com', password: 'x', token: 'token-vigente', tokenExpiracion: new Date(Date.now() + 3600 * 1000) };
-  t.mock.method(facturaApiService, 'emitirFacturaSimple', async () => ({ id: 1, numero_factura: 1 }));
-  const descargarSpy = t.mock.method(facturaApiService, 'descargarPdf', async () => {
-    throw new Error('no debería llamarse');
-  });
-  const uploadSpy = t.mock.method(whatsappService, 'uploadMedia', async () => {
-    throw new Error('no debería llamarse');
-  });
+  t.mock.method(facturaApiService, 'emitirFacturaSimple', async () => ({ id: 1, numero_factura: 1, cdc: 'cdc-1', estado_sifen: 'FIRMADO' }));
 
   const resultado = await facturaEmisionService.emitirFactura({ empresa, ...DATOS_FACTURA });
 
-  assert.equal(descargarSpy.mock.callCount(), 0);
-  assert.equal(uploadSpy.mock.callCount(), 0);
-  assert.equal(resultado.pdfMediaId, null);
+  assert.equal(resultado.pdfNombre, null);
+  assert.equal(resultado.cdc, 'cdc-1');
+  assert.equal(resultado.estadoSifen, 'FIRMADO');
 });

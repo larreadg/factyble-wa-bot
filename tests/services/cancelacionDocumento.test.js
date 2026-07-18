@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const cancelacionDocumentoService = require('../../src/services/cancelacionDocumento.service');
 const facturaApiService = require('../../src/services/facturaApi.service');
 const empresaService = require('../../src/services/empresa.service');
+const documentoService = require('../../src/services/documento.service');
 const { FacturaApiError } = require('../../src/services/facturaApi.errors');
 const crypto = require('../../src/utils/crypto');
 
@@ -33,6 +34,7 @@ test('cancelarFactura: sin token cacheado, autentica y cancela', async (t) => {
     codigo_respuesta: '0260',
   }));
   t.mock.method(empresaService, 'guardarToken', async () => {});
+  const registrarCancelacionSpy = t.mock.method(documentoService, 'registrarCancelacion', async () => {});
 
   const resultado = await cancelacionDocumentoService.cancelarFactura(EMPRESA_SIN_TOKEN(), CDC);
 
@@ -42,6 +44,10 @@ test('cancelarFactura: sin token cacheado, autentica y cancela', async (t) => {
   assert.equal(resultado.estadoSifen, 'CANCELADO');
   assert.equal(resultado.mensajeRespuesta, 'Transacción aprobada');
   assert.equal(resultado.codigoRespuesta, '0260');
+
+  assert.equal(registrarCancelacionSpy.mock.callCount(), 1);
+  assert.equal(registrarCancelacionSpy.mock.calls[0].arguments[0], CDC);
+  assert.deepEqual(registrarCancelacionSpy.mock.calls[0].arguments[1], { estadoSifen: 'CANCELADO', sifenEstadoMensaje: 'Transacción aprobada' });
 });
 
 test('cancelarFactura: con token cacheado vigente, no reautentica', async (t) => {
@@ -49,6 +55,7 @@ test('cancelarFactura: con token cacheado vigente, no reautentica', async (t) =>
     throw new Error('no debería reautenticar');
   });
   t.mock.method(facturaApiService, 'cancelarFacturaSimple', async () => ({ estado_sifen: 'CANCELADO' }));
+  t.mock.method(documentoService, 'registrarCancelacion', async () => {});
 
   await cancelacionDocumentoService.cancelarFactura(EMPRESA_CON_TOKEN(), CDC);
 
@@ -67,6 +74,7 @@ test('cancelarFactura: token rechazado (401/AUTH_FAILED) reautentica una vez y r
     return { estado_sifen: 'CANCELADO' };
   });
   t.mock.method(empresaService, 'guardarToken', async () => {});
+  t.mock.method(documentoService, 'registrarCancelacion', async () => {});
 
   const resultado = await cancelacionDocumentoService.cancelarFactura(empresa, CDC);
 
@@ -82,6 +90,7 @@ test('cancelarFactura: SIFEN rechaza el evento (200 con estado distinto de CANCE
     mensaje_respuesta: 'El plazo para cancelar el documento ya venció',
     codigo_respuesta: '0420',
   }));
+  t.mock.method(documentoService, 'registrarCancelacion', async () => {});
 
   const resultado = await cancelacionDocumentoService.cancelarFactura(EMPRESA_CON_TOKEN(), CDC);
 
@@ -126,11 +135,14 @@ test('cancelarNotaCredito: envía exactamente {cdc} y mapea la respuesta', async
     mensaje_respuesta: 'Transacción aprobada',
     codigo_respuesta: '0260',
   }));
+  const registrarCancelacionSpy = t.mock.method(documentoService, 'registrarCancelacion', async () => {});
 
   const resultado = await cancelacionDocumentoService.cancelarNotaCredito(EMPRESA_CON_TOKEN(), CDC);
 
   assert.deepEqual(cancelarSpy.mock.calls[0].arguments[1], { cdc: CDC });
   assert.equal(resultado.estadoSifen, 'CANCELADO');
+  assert.equal(registrarCancelacionSpy.mock.callCount(), 1);
+  assert.equal(registrarCancelacionSpy.mock.calls[0].arguments[0], CDC);
 });
 
 test('cancelarNotaCredito: token rechazado reautentica una vez y reintenta', async (t) => {
@@ -143,6 +155,7 @@ test('cancelarNotaCredito: token rechazado reautentica una vez y reintenta', asy
     return { estado_sifen: 'CANCELADO' };
   });
   t.mock.method(empresaService, 'guardarToken', async () => {});
+  t.mock.method(documentoService, 'registrarCancelacion', async () => {});
 
   const resultado = await cancelacionDocumentoService.cancelarNotaCredito(empresa, CDC);
 
