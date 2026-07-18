@@ -15,7 +15,15 @@ const {
   construirMensajeEstadoNoAprobado,
 } = require('../utils/cancelacionPresentacion');
 const { extraerCdc } = require('../utils/cdc');
-const { ESTADOS_SESION, ESTADOS_TERMINALES, MENSAJES, MENSAJE_BIENVENIDA, OPERACIONES, MENU_IDS } = require('../utils/constants');
+const {
+  ESTADOS_SESION,
+  ESTADOS_TERMINALES,
+  MENSAJES,
+  MENSAJE_BIENVENIDA,
+  MENSAJE_ANTIGUEDAD_MAXIMA_MS,
+  OPERACIONES,
+  MENU_IDS,
+} = require('../utils/constants');
 
 const contactoService = require('./contacto.service');
 const conversacionService = require('./conversacion.service');
@@ -1018,6 +1026,21 @@ const procesarMensajeEntrante = async (waMessage) => {
 
   if (duplicado) {
     logger.info('Mensaje entrante duplicado ignorado', mensajeEntrante.whatsappMensajeId);
+    return;
+  }
+
+  // Mensaje genuino (no duplicado) pero con timestamp de Meta muy anterior a "ahora":
+  // no es un reintento del mismo wamid (eso ya se filtró arriba), sino una entrega
+  // demorada del webhook (ej. el bot estuvo caído/inalcanzable y Meta reintentó con
+  // backoff durante horas). Se deja registrado para el historial, pero no se dispara el
+  // flujo normal: reaccionar recién ahora a algo escrito hace rato (ej. un "hola" que
+  // dispara el menú principal fuera de cualquier contexto) confunde más de lo que ayuda.
+  const antiguedadMs = Date.now() - fechaMensaje.getTime();
+  if (antiguedadMs > MENSAJE_ANTIGUEDAD_MAXIMA_MS) {
+    logger.warn('Mensaje entrante descartado por entrega demorada del webhook', {
+      whatsappMensajeId: waMessage.id,
+      antiguedadMs,
+    });
     return;
   }
 

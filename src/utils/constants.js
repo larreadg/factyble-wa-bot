@@ -21,6 +21,14 @@ const ESTADOS_TERMINALES = Object.freeze([
 const MENSAJE_BIENVENIDA =
   '¡Bienvenido a Factyble! Podés enviarme en un solo mensaje el nombre y RUC o cédula del cliente, junto con los productos, cantidades y precios.';
 
+// Si Meta reentrega un webhook mucho después de que el usuario efectivamente escribió
+// (ej. el bot estuvo caído/inalcanzable y Meta reintentó con backoff durante horas), el
+// mensaje llega con un `timestamp` viejo pero se procesa como si fuera nuevo: si era un
+// simple "hola", el usuario recibe el menú principal sin haber escrito nada en ese
+// momento. Por encima de este umbral, el mensaje se registra pero no dispara el flujo
+// normal (ver botOrchestrator.service.js).
+const MENSAJE_ANTIGUEDAD_MAXIMA_MS = 15 * 60 * 1000;
+
 const MENSAJES = Object.freeze({
   NO_SE_PUDO_INTERPRETAR:
     'No pude identificar con seguridad todos los datos. Indicame el nombre y RUC o cédula del cliente, además de cada producto, cantidad y precio unitario.',
@@ -103,6 +111,7 @@ module.exports = {
   ESTADOS_SESION,
   ESTADOS_TERMINALES,
   MENSAJE_BIENVENIDA,
+  MENSAJE_ANTIGUEDAD_MAXIMA_MS,
   MENSAJES,
   OPERACIONES,
   MENU_IDS,
