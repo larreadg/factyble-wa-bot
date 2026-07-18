@@ -21,9 +21,9 @@ const conReintentoAuth = async (empresa, llamarConToken) => {
 };
 
 const mapearResultado = (data) => ({
-  estadoSifen: data?.estado_sifen ?? null,
-  mensajeRespuesta: data?.mensaje_respuesta ?? null,
-  codigoRespuesta: data?.codigo_respuesta ?? null,
+  estadoSifen: data?.estadoSifen ?? null,
+  mensajeRespuesta: data?.mensajeRespuesta ?? null,
+  codigoRespuesta: data?.codigoRespuesta ?? null,
 });
 
 /**

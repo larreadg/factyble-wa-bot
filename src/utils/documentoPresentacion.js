@@ -15,4 +15,10 @@ const construirMensajeError = (documento) => {
   return `❌ Hubo un problema al procesar tu ${etiquetaTipoDocumento(documento.tipo)}${numero}. Por favor comunicate con soporte: ${SOPORTE_WHATSAPP}`;
 };
 
-module.exports = { construirMensajeRechazado, construirMensajeError };
+const construirCaptionPdf = (documento) => {
+  const etiqueta = documento.tipo === 'FACTURA' ? 'Factura' : 'Nota de crédito';
+  if (!documento.numeroDocumentoFormateado) return etiqueta;
+  return `${etiqueta} nro.: ${documento.numeroDocumentoFormateado}`;
+};
+
+module.exports = { construirMensajeRechazado, construirMensajeError, construirCaptionPdf };

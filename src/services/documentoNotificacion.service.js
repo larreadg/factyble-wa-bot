@@ -1,6 +1,6 @@
 const facturaApiService = require('./facturaApi.service');
 const whatsappService = require('./whatsapp.service');
-const { construirMensajeRechazado, construirMensajeError } = require('../utils/documentoPresentacion');
+const { construirMensajeRechazado, construirMensajeError, construirCaptionPdf } = require('../utils/documentoPresentacion');
 
 // GET /public/<pdfNombre> es un endpoint público (ver facturaApi.service.js): no hace
 // falta autenticarse contra la API de facturación para descargar el PDF acá.
@@ -15,7 +15,7 @@ const enviarAprobado = async (documento) => {
   await whatsappService.sendDocumentMessage(documento.numeroTelefono, {
     id: media?.id,
     filename: documento.pdfNombre,
-    caption: documento.numeroDocumentoFormateado || undefined,
+    caption: construirCaptionPdf(documento),
   });
 };
 
