@@ -31,6 +31,8 @@ const RESPUESTA_EMISION = {
   numeroFacturaFormateada: '001-001-0000045',
   cdc: '01800695921001001000000012024071410238123456',
   pdfNombre: 'b3c1-uuid.pdf',
+  clienteNombre: 'Diego Larrea',
+  clienteDocumento: '5249657-0',
   estado_sifen: 'FIRMADO',
   sifen_estado_mensaje: null,
 };
@@ -65,6 +67,8 @@ test('sin token cacheado: autentica y emite, sin tocar WhatsApp (el PDF se enví
   assert.equal(resultado.numeroFormateado, '001-001-0000045');
   assert.equal(resultado.cdc, '01800695921001001000000012024071410238123456');
   assert.equal(resultado.pdfNombre, 'b3c1-uuid.pdf');
+  assert.equal(resultado.clienteNombre, 'Diego Larrea');
+  assert.equal(resultado.clienteDocumento, '5249657-0');
   assert.equal(resultado.estadoSifen, 'FIRMADO');
   assert.equal(resultado.sifenEstadoMensaje, null);
 });

@@ -23,7 +23,7 @@ const construirPayload = ({ cliente, condicionVenta, items }) => ({
  * nada que mostrarle al cliente. El PDF se descarga y envía recién cuando se conoce el
  * estado final (ver documento.service.js).
  * @param {{ empresa: object, cliente: {nombre: string, tipoDocumento: 'RUC'|'CI', numeroDocumento: string}, condicionVenta: 'CONTADO'|'CREDITO', items: Array<{descripcion: string, cantidad: number, precioUnitario: number, tasa: '0%'|'5%'|'10%'}>, totales: {subtotal: number, totalGeneral: number}, idempotencyKey: string }} params
- * @returns {Promise<{ documentoId: string, numero: string, numeroFormateado: string, cdc: string, pdfNombre: string, estadoSifen: string, sifenEstadoMensaje: string }>}
+ * @returns {Promise<{ documentoId: string, numero: string, numeroFormateado: string, cdc: string, pdfNombre: string, clienteNombre: string, clienteDocumento: string, estadoSifen: string, sifenEstadoMensaje: string }>}
  */
 const emitirFactura = async ({ empresa, cliente, condicionVenta, items, idempotencyKey }) => {
   const payload = construirPayload({ cliente, condicionVenta, items });
@@ -55,6 +55,8 @@ const emitirFactura = async ({ empresa, cliente, condicionVenta, items, idempote
     numeroFormateado: data?.numeroFacturaFormateada ?? null,
     cdc: data?.cdc ?? null,
     pdfNombre: data?.pdfNombre ?? null,
+    clienteNombre: data?.clienteNombre ?? null,
+    clienteDocumento: data?.clienteDocumento ?? null,
     estadoSifen: data?.estado_sifen ?? null,
     sifenEstadoMensaje: data?.sifen_estado_mensaje ?? null,
   };

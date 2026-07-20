@@ -69,6 +69,8 @@ test('emitirNotaCredito: envía exactamente {cdc, items}, sin idempotencyKey ni 
     numeroNotaCreditoFormateada: '001-001-0000045',
     cdc: CDC,
     pdfNombre: 'nc-uuid.pdf',
+    clienteNombre: 'Juan Pérez',
+    clienteDocumento: '4123456-7',
     estado_sifen: 'FIRMADO',
     sifen_estado_mensaje: null,
     linkqr: 'https://ejemplo.com/qr',
@@ -85,6 +87,8 @@ test('emitirNotaCredito: envía exactamente {cdc, items}, sin idempotencyKey ni 
   assert.equal(resultado.numeroFormateado, '001-001-0000045');
   assert.equal(resultado.cdc, CDC);
   assert.equal(resultado.pdfNombre, 'nc-uuid.pdf');
+  assert.equal(resultado.clienteNombre, 'Juan Pérez');
+  assert.equal(resultado.clienteDocumento, '4123456-7');
   assert.equal(resultado.estadoSifen, 'FIRMADO');
   assert.equal(resultado.linkQr, 'https://ejemplo.com/qr');
 });

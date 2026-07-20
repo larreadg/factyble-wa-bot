@@ -190,6 +190,8 @@ model Documento {
   cdc                       String                @unique @db.VarChar(44)
   pdfNombre                 String?               @map("pdf_nombre")
   numeroDocumentoFormateado String?               @map("numero_documento_formateado")
+  clienteNombre             String?               @map("cliente_nombre")
+  clienteDocumento          String?               @map("cliente_documento")
   estadoSifen               EstadoSifenDocumento? @map("estado_sifen")
   sifenEstadoMensaje        String?               @map("sifen_estado_mensaje") @db.Text
   // Cuándo se le avisó al cliente el resultado final (APROBADO/RECHAZADO/ERROR). Null =

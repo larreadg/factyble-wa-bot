@@ -14,6 +14,8 @@ test('registrarEmision: crea el documento con los campos dados, usando null para
     cdc: 'cdc-1',
     pdfNombre: 'factura.pdf',
     numeroDocumentoFormateado: '001-001-0000001',
+    clienteNombre: 'Juan Pérez',
+    clienteDocumento: '4123456-7',
     estadoSifen: 'FIRMADO',
     sifenEstadoMensaje: null,
   });
@@ -26,6 +28,8 @@ test('registrarEmision: crea el documento con los campos dados, usando null para
     cdc: 'cdc-1',
     pdfNombre: 'factura.pdf',
     numeroDocumentoFormateado: '001-001-0000001',
+    clienteNombre: 'Juan Pérez',
+    clienteDocumento: '4123456-7',
     estadoSifen: 'FIRMADO',
     sifenEstadoMensaje: null,
   });
@@ -38,6 +42,8 @@ test('registrarEmision: campos opcionales ausentes se guardan como null, no unde
 
   assert.equal(createSpy.calls[0][0].data.pdfNombre, null);
   assert.equal(createSpy.calls[0][0].data.numeroDocumentoFormateado, null);
+  assert.equal(createSpy.calls[0][0].data.clienteNombre, null);
+  assert.equal(createSpy.calls[0][0].data.clienteDocumento, null);
   assert.equal(createSpy.calls[0][0].data.estadoSifen, null);
   assert.equal(createSpy.calls[0][0].data.sifenEstadoMensaje, null);
 });

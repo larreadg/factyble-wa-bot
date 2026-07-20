@@ -219,6 +219,8 @@ const confirmarYEmitir = async ({ contacto, conversacion, sesion, borrador }) =>
     cdc: resultado.cdc,
     pdfNombre: resultado.pdfNombre,
     numeroDocumentoFormateado: resultado.numeroFormateado,
+    clienteNombre: resultado.clienteNombre,
+    clienteDocumento: resultado.clienteDocumento,
     estadoSifen: resultado.estadoSifen,
     sifenEstadoMensaje: resultado.sifenEstadoMensaje,
   });
@@ -706,6 +708,8 @@ const confirmarYEmitirNotaCredito = async ({ contacto, conversacion, sesion, bor
     cdc: resultado.cdc,
     pdfNombre: resultado.pdfNombre,
     numeroDocumentoFormateado: resultado.numeroFormateado,
+    clienteNombre: resultado.clienteNombre,
+    clienteDocumento: resultado.clienteDocumento,
     estadoSifen: resultado.estadoSifen,
     sifenEstadoMensaje: resultado.sifenEstadoMensaje,
   });

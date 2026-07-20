@@ -1,6 +1,17 @@
 const prisma = require('../utils/prisma');
 
-const registrarEmision = ({ empresaId, numeroTelefono, tipo, cdc, pdfNombre, numeroDocumentoFormateado, estadoSifen, sifenEstadoMensaje }) =>
+const registrarEmision = ({
+  empresaId,
+  numeroTelefono,
+  tipo,
+  cdc,
+  pdfNombre,
+  numeroDocumentoFormateado,
+  clienteNombre,
+  clienteDocumento,
+  estadoSifen,
+  sifenEstadoMensaje,
+}) =>
   prisma.documento.create({
     data: {
       empresaId,
@@ -9,6 +20,8 @@ const registrarEmision = ({ empresaId, numeroTelefono, tipo, cdc, pdfNombre, num
       cdc,
       pdfNombre: pdfNombre || null,
       numeroDocumentoFormateado: numeroDocumentoFormateado || null,
+      clienteNombre: clienteNombre || null,
+      clienteDocumento: clienteDocumento || null,
       estadoSifen: estadoSifen || null,
       sifenEstadoMensaje: sifenEstadoMensaje || null,
     },

@@ -53,6 +53,34 @@ test('RECHAZADO: envía un mensaje de texto con el motivo de SIFEN', async (t) =
   assert.ok(enviarSpy.mock.calls[0].arguments[1].includes('rechazada'));
 });
 
+test('RECHAZADO: incluye nombre y documento del cliente cuando están cargados', async (t) => {
+  const enviarSpy = t.mock.method(whatsappService, 'sendTextMessage', async () => ({ messages: [{ id: 'wamid.1' }] }));
+
+  await documentoNotificacionService.enviarPorEstado({
+    ...DOCUMENTO_APROBADO,
+    estadoSifen: 'RECHAZADO',
+    sifenEstadoMensaje: 'RUC del receptor inexistente en la base de datos de Marangatu',
+    clienteNombre: 'Diego Larrea',
+    clienteDocumento: '5249657-0',
+  });
+
+  assert.ok(enviarSpy.mock.calls[0].arguments[1].includes('Cliente: Diego Larrea (5249657-0)'));
+});
+
+test('RECHAZADO sin datos del cliente: no agrega la línea de cliente', async (t) => {
+  const enviarSpy = t.mock.method(whatsappService, 'sendTextMessage', async () => ({ messages: [{ id: 'wamid.1' }] }));
+
+  await documentoNotificacionService.enviarPorEstado({
+    ...DOCUMENTO_APROBADO,
+    estadoSifen: 'RECHAZADO',
+    sifenEstadoMensaje: 'motivo',
+    clienteNombre: null,
+    clienteDocumento: null,
+  });
+
+  assert.ok(!enviarSpy.mock.calls[0].arguments[1].includes('Cliente:'));
+});
+
 test('RECHAZADO en una nota de crédito usa la etiqueta correcta', async (t) => {
   const enviarSpy = t.mock.method(whatsappService, 'sendTextMessage', async () => ({ messages: [{ id: 'wamid.1' }] }));
 
