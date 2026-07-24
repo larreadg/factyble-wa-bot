@@ -29,4 +29,14 @@ const actualizarUltimoMensaje = (conversacionId, fecha = new Date()) => {
   });
 };
 
-module.exports = { getOrCreateAbierta, actualizarUltimoMensaje };
+// Marca hasta qué Mensaje ya se incluyó en un detalle de chat enviado a Telegram, para
+// que el próximo export (otra operación sobre la misma Conversacion, que nunca se
+// cierra) arranque desde ahí en vez de reenviar todo de nuevo (ver chatExport.service.js).
+const marcarExportado = (conversacionId, ultimoMensajeExportadoId) => {
+  return prisma.conversacion.update({
+    where: { id: conversacionId },
+    data: { ultimoMensajeExportadoId },
+  });
+};
+
+module.exports = { getOrCreateAbierta, actualizarUltimoMensaje, marcarExportado };

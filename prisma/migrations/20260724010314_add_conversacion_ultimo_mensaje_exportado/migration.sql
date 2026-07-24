@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE `conversacion` ADD COLUMN `ultimo_mensaje_exportado_id` INTEGER NULL;

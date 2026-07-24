@@ -28,4 +28,19 @@ module.exports = {
   // Generoso por defecto: el backend de facturación espera a que JasperReports termine
   // de generar el PDF antes de responder /factura/simple.
   FACTURACION_API_TIMEOUT_MS: Number(process.env.FACTURACION_API_TIMEOUT_MS) || 30000,
+
+  // Bot de Telegram al que se envía el detalle .txt de cada chat al finalizar/cancelarse
+  // (ver chatExport.service.js).
+  TELEGRAM_BOT_TOKEN: process.env.TELEGRAM_BOT_TOKEN,
+  TELEGRAM_CHAT_ID: process.env.TELEGRAM_CHAT_ID,
+
+  // Barrido de sesiones que quedaron esperando algo del usuario y nunca llegaron a un
+  // estado terminal (ver sesionBarrido.service.js). 24h por defecto: coincide con la
+  // ventana de mensajería de WhatsApp (fuera de ella tampoco se le puede escribir de
+  // vuelta con un mensaje de texto libre). PROCESANDO expira mucho antes: normalmente se
+  // resuelve en el mismo request-response, así que tardar más ahí indica una caída del
+  // proceso a mitad de una emisión/cancelación, no inactividad del usuario.
+  SESION_INACTIVA_TIMEOUT_MS: Number(process.env.SESION_INACTIVA_TIMEOUT_MS) || 24 * 60 * 60 * 1000,
+  SESION_PROCESANDO_TIMEOUT_MS: Number(process.env.SESION_PROCESANDO_TIMEOUT_MS) || 15 * 60 * 1000,
+  SESION_BARRIDO_INTERVALO_MS: Number(process.env.SESION_BARRIDO_INTERVALO_MS) || 10 * 60 * 1000,
 };

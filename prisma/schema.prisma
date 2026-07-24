@@ -58,6 +58,11 @@ model Conversacion {
   fechaInicio        DateTime           @map("fecha_inicio")
   fechaUltimoMensaje DateTime?          @map("fecha_ultimo_mensaje")
   fechaCierre        DateTime?          @map("fecha_cierre")
+  // Id del último Mensaje incluido en el detalle de chat enviado a Telegram (ver
+  // chatExport.service.js). Null = todavía no se exportó nada de esta conversación.
+  // Permite que cada export incluya solo los mensajes nuevos desde el anterior, aunque
+  // la Conversacion siga ABIERTA a través de varias operaciones.
+  ultimoMensajeExportadoId Int?         @map("ultimo_mensaje_exportado_id")
   fechaCreacion      DateTime           @default(now()) @map("fecha_creacion")
   fechaModificacion  DateTime           @updatedAt @map("fecha_modificacion")
 

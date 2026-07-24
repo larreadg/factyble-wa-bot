@@ -40,6 +40,7 @@ const cancelacionParserService = require('./cancelacionParser.service');
 const cancelacionDocumentoService = require('./cancelacionDocumento.service');
 const documentoService = require('./documento.service');
 const transcripcionService = require('./transcripcion.service');
+const chatExportService = require('./chatExport.service');
 const { OpenAIServiceError } = require('./openai.errors');
 const { FacturaApiError } = require('./facturaApi.errors');
 
@@ -163,11 +164,28 @@ const registrarDocumentoEmitido = async (datos) => {
 const construirMensajeDatosRechazados = (detalle) =>
   `No pudimos emitir la factura: la API de facturación rechazó algunos datos${detalle ? ` (${detalle})` : ''}. Revisá los datos, indicá la corrección que haga falta y volvé a confirmar.`;
 
+// Detalle del chat a Telegram (ver chatExport.service.js): fire-and-forget, nunca se
+// awaitea desde acá porque no debe bloquear ni poder romper la respuesta al usuario
+// final. exportar() atrapa sus propios errores. Solo se llama con un estadoHasta
+// terminal (COMPLETADA/CANCELADA/ERROR); cualquier otro estado se ignora en silencio.
+const RESULTADO_POR_ESTADO_TERMINAL = {
+  [ESTADOS_SESION.COMPLETADA]: 'EXITO',
+  [ESTADOS_SESION.CANCELADA]: 'CANCELADO',
+  [ESTADOS_SESION.ERROR]: 'NO_FINALIZADO',
+};
+
+const notificarFinDeChat = (conversacion, contacto, sesion, estadoHasta) => {
+  const resultado = RESULTADO_POR_ESTADO_TERMINAL[estadoHasta];
+  if (!resultado) return;
+  chatExportService.exportar({ conversacion, contacto, operacion: sesion.operacionActiva, resultado });
+};
+
 const cancelar = async ({ contacto, conversacion, sesion }) => {
   const actualizada = await sesionConversacionalService.transicionar(sesion.id, ESTADOS_ACTIVOS, ESTADOS_SESION.CANCELADA, sesion.datosTemporales);
 
   if (!actualizada) return;
 
+  notificarFinDeChat(conversacion, contacto, sesion, ESTADOS_SESION.CANCELADA);
   await responderYRegistrar(conversacion, contacto, MENSAJES.CANCELACION);
 };
 
@@ -208,6 +226,7 @@ const confirmarYEmitir = async ({ contacto, conversacion, sesion, borrador }) =>
 
     logger.error('Error al emitir factura', safeError(error));
     await sesionConversacionalService.transicionar(sesion.id, [ESTADOS_SESION.PROCESANDO], ESTADOS_SESION.ERROR, datosConKey);
+    notificarFinDeChat(conversacion, contacto, sesion, ESTADOS_SESION.ERROR);
     await responderYRegistrar(conversacion, contacto, MENSAJES.ERROR_EMISION);
     return;
   }
@@ -235,6 +254,7 @@ const confirmarYEmitir = async ({ contacto, conversacion, sesion, borrador }) =>
   };
 
   await sesionConversacionalService.transicionar(sesion.id, [ESTADOS_SESION.PROCESANDO], ESTADOS_SESION.COMPLETADA, datosCompletados);
+  notificarFinDeChat(conversacion, contacto, sesion, ESTADOS_SESION.COMPLETADA);
   await responderYRegistrar(conversacion, contacto, MENSAJES.FACTURA_PENDIENTE_APROBACION);
 };
 
@@ -264,6 +284,7 @@ const abortarCancelacion = async ({ contacto, conversacion, sesion }) => {
 
   if (!actualizada) return;
 
+  notificarFinDeChat(conversacion, contacto, sesion, ESTADOS_SESION.CANCELADA);
   await responderYRegistrar(conversacion, contacto, MENSAJES.CANC_CANCELACION);
 };
 
@@ -317,6 +338,7 @@ const confirmarYCancelarDocumento = async ({ contacto, conversacion, sesion, bor
     if (error instanceof FacturaApiError && error.type === 'NOT_FOUND') {
       if (borrador.intentoAlternativoUsado) {
         await sesionConversacionalService.transicionar(sesion.id, [ESTADOS_SESION.PROCESANDO], ESTADOS_SESION.CANCELADA, borrador);
+        notificarFinDeChat(conversacion, contacto, sesion, ESTADOS_SESION.CANCELADA);
         await responderYRegistrar(conversacion, contacto, MENSAJES.CANC_CDC_NO_CORRESPONDE);
         return;
       }
@@ -334,8 +356,10 @@ const confirmarYCancelarDocumento = async ({ contacto, conversacion, sesion, bor
       await sesionConversacionalService.transicionar(sesion.id, [ESTADOS_SESION.PROCESANDO], ESTADOS_SESION.CAPTURANDO_DATOS, borradorSinCdc);
     } else if (terminarOk) {
       await sesionConversacionalService.transicionar(sesion.id, [ESTADOS_SESION.PROCESANDO], ESTADOS_SESION.COMPLETADA, borrador);
+      notificarFinDeChat(conversacion, contacto, sesion, ESTADOS_SESION.COMPLETADA);
     } else {
       await sesionConversacionalService.transicionar(sesion.id, [ESTADOS_SESION.PROCESANDO], ESTADOS_SESION.ERROR, borrador);
+      notificarFinDeChat(conversacion, contacto, sesion, ESTADOS_SESION.ERROR);
     }
 
     await responderYRegistrar(conversacion, contacto, mensaje);
@@ -348,11 +372,13 @@ const confirmarYCancelarDocumento = async ({ contacto, conversacion, sesion, bor
   // efectivamente aprobó el evento de cancelación.
   if (resultado.estadoSifen === 'CANCELADO') {
     await sesionConversacionalService.transicionar(sesion.id, [ESTADOS_SESION.PROCESANDO], ESTADOS_SESION.COMPLETADA, datosCompletados);
+    notificarFinDeChat(conversacion, contacto, sesion, ESTADOS_SESION.COMPLETADA);
     await responderYRegistrar(conversacion, contacto, construirMensajeCancelacionExitosa({ cdc: borrador.cdc, estadoSifen: resultado.estadoSifen }));
     return;
   }
 
   await sesionConversacionalService.transicionar(sesion.id, [ESTADOS_SESION.PROCESANDO], ESTADOS_SESION.ERROR, datosCompletados);
+  notificarFinDeChat(conversacion, contacto, sesion, ESTADOS_SESION.ERROR);
   await responderYRegistrar(conversacion, contacto, construirMensajeRechazoSifen(resultado));
 };
 
@@ -625,6 +651,7 @@ const cancelarNotaCredito = async ({ contacto, conversacion, sesion }) => {
 
   if (!actualizada) return;
 
+  notificarFinDeChat(conversacion, contacto, sesion, ESTADOS_SESION.CANCELADA);
   await responderYRegistrar(conversacion, contacto, MENSAJES.NC_CANCELACION);
 };
 
@@ -695,6 +722,7 @@ const confirmarYEmitirNotaCredito = async ({ contacto, conversacion, sesion, bor
       await sesionConversacionalService.transicionar(sesion.id, [ESTADOS_SESION.PROCESANDO], ESTADOS_SESION.ESPERANDO_CONFIRMACION, borrador);
     } else {
       await sesionConversacionalService.transicionar(sesion.id, [ESTADOS_SESION.PROCESANDO], ESTADOS_SESION.ERROR, borrador);
+      notificarFinDeChat(conversacion, contacto, sesion, ESTADOS_SESION.ERROR);
     }
 
     await responderYRegistrar(conversacion, contacto, mensaje);
@@ -716,6 +744,7 @@ const confirmarYEmitirNotaCredito = async ({ contacto, conversacion, sesion, bor
 
   const datosCompletados = { ...borrador, resultadoEmision: resultado };
   await sesionConversacionalService.transicionar(sesion.id, [ESTADOS_SESION.PROCESANDO], ESTADOS_SESION.COMPLETADA, datosCompletados);
+  notificarFinDeChat(conversacion, contacto, sesion, ESTADOS_SESION.COMPLETADA);
   await responderYRegistrar(conversacion, contacto, MENSAJES.NC_PENDIENTE_APROBACION);
 };
 

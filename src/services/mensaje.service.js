@@ -51,4 +51,15 @@ const crearArchivo = ({ mensajeId, whatsappMediaId, nombreArchivo, mimeType, tam
   });
 };
 
-module.exports = { registrarEntrante, registrarSaliente, actualizarEstadoPorWhatsappId, crearArchivo };
+// Mensajes de una conversación posteriores a `desdeMensajeId` (exclusivo), para armar el
+// detalle de chat que se envía a Telegram (ver chatExport.service.js). desdeMensajeId
+// null/undefined trae toda la conversación (primer export).
+const listarParaExportar = (conversacionId, desdeMensajeId) => {
+  return prisma.mensaje.findMany({
+    where: { conversacionId, ...(desdeMensajeId ? { id: { gt: desdeMensajeId } } : {}) },
+    orderBy: { fechaMensaje: 'asc' },
+    include: { archivo: true },
+  });
+};
+
+module.exports = { registrarEntrante, registrarSaliente, actualizarEstadoPorWhatsappId, crearArchivo, listarParaExportar };
