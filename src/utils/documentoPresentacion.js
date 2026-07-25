@@ -36,12 +36,17 @@ const construirCaptionPdf = (documento) => {
   const esFactura = documento.tipo === 'FACTURA';
   const etiqueta = esFactura ? 'Factura' : 'Nota de crédito';
   const emoji = esFactura ? '🧾' : '📄';
+  const lineaCliente = construirLineaCliente(documento);
 
-  if (!documento.numeroDocumentoFormateado) return `✅ *¡${etiqueta} aprobada!* 🎉`;
+  if (!documento.numeroDocumentoFormateado) {
+    return lineaCliente ? `✅ *¡${etiqueta} aprobada!* 🎉\n${lineaCliente}` : `✅ *¡${etiqueta} aprobada!* 🎉`;
+  }
 
-  return [`✅ *¡${etiqueta} aprobada!* 🎉`, `${emoji} ${etiqueta} nro. *${documento.numeroDocumentoFormateado}*`, '', 'Ya podés reenviarla a tu cliente 📤'].join(
-    '\n',
-  );
+  const lineas = [`✅ *¡${etiqueta} aprobada!* 🎉`, `${emoji} ${etiqueta} nro. *${documento.numeroDocumentoFormateado}*`];
+  if (lineaCliente) lineas.push(lineaCliente);
+  lineas.push('', 'Ya podés reenviarla a tu cliente 📤');
+
+  return lineas.join('\n');
 };
 
 module.exports = { construirMensajeRechazado, construirMensajeError, construirCaptionPdf };
