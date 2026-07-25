@@ -121,9 +121,9 @@ const MENU_PRINCIPAL_SECTIONS = [
   {
     title: 'Documentos',
     rows: [
-      { id: MENU_IDS.EMITIR_FACTURA, title: 'Emitir factura', description: 'Factura electrónica nueva' },
-      { id: MENU_IDS.NOTA_CREDITO, title: 'Nota de crédito', description: 'Sobre una factura emitida' },
-      { id: MENU_IDS.CANCELAR_DOCUMENTO, title: 'Cancelar documento', description: 'Factura o NC ya emitida' },
+      { id: MENU_IDS.EMITIR_FACTURA, title: '🧾 Emitir factura', description: 'Creá una factura electrónica en minutos' },
+      { id: MENU_IDS.NOTA_CREDITO, title: '📄 Nota de crédito', description: 'Acreditá una factura ya emitida' },
+      { id: MENU_IDS.CANCELAR_DOCUMENTO, title: '❌ Cancelar documento', description: 'Anulá una factura o nota de crédito' },
     ],
   },
 ];
@@ -133,9 +133,9 @@ const MENU_PRINCIPAL_SECTIONS = [
 // desconocido, etc.).
 const enviarMenuPrincipal = (to) => {
   return sendListMessage(to, {
-    headerText: 'Factyble',
-    bodyText: 'Hola 😁 ¿Qué querés hacer?',
-    footerText: 'Elegí una opción',
+    headerText: 'Factyble 🧾',
+    bodyText: '👋 *¡Hola! Soy tu asistente de facturación.*\n\nElegí qué querés hacer y te guío paso a paso:',
+    footerText: 'También podés escribirme o mandarme un audio 🎙️',
     buttonText: 'Ver opciones',
     sections: MENU_PRINCIPAL_SECTIONS,
   });

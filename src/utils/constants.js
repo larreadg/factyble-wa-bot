@@ -18,8 +18,13 @@ const ESTADOS_TERMINALES = Object.freeze([
   ESTADOS_SESION.ERROR,
 ]);
 
-const MENSAJE_BIENVENIDA =
-  '¡Bienvenido a Factyble! Podés enviarme en un solo mensaje el nombre y RUC o cédula del cliente, junto con los productos, cantidades y precios.';
+const MENSAJE_BIENVENIDA = `👋 *¡Hola de nuevo!*
+
+Seguimos con la operación que teníamos en curso 😉
+Podés mandarme todo en un solo mensaje: *nombre y RUC o cédula del cliente*,
+más los *productos con cantidad y precio*.
+
+Si preferís empezar de cero, escribime *"cancelar"*.`;
 
 // Si Meta reentrega un webhook mucho después de que el usuario efectivamente escribió
 // (ej. el bot estuvo caído/inalcanzable y Meta reintentó con backoff durante horas), el
@@ -30,65 +35,269 @@ const MENSAJE_BIENVENIDA =
 const MENSAJE_ANTIGUEDAD_MAXIMA_MS = 15 * 60 * 1000;
 
 const MENSAJES = Object.freeze({
-  NO_SE_PUDO_INTERPRETAR:
-    'No pude identificar con seguridad todos los datos. Indicame el nombre y RUC o cédula del cliente, además de cada producto, cantidad y precio unitario.',
-  FUERA_DE_ALCANCE: 'Por ahora puedo ayudarte a preparar y emitir facturas electrónicas.',
-  OPENAI_NO_DISPONIBLE: 'No pude interpretar el mensaje en este momento. Podés intentar nuevamente en unos instantes.',
-  YA_PROCESANDO: 'La factura ya está siendo procesada. Te enviaré el documento cuando esté disponible.',
-  CANCELACION: 'La emisión fue cancelada.',
-  ERROR_EMISION: 'No pudimos completar la emisión. La operación quedó registrada para evitar una emisión duplicada.',
-  PROCESANDO_FACTURA: 'Tu factura está siendo emitida...',
-  FACTURA_PENDIENTE_APROBACION:
-    '📲 Quedate tranquilo/a, en cuanto sea aprobada te enviaré el PDF automáticamente por este chat. 🚀',
-  SOLO_TEXTO_SOPORTADO: 'Por el momento solo puedo procesar mensajes de texto para emitir facturas.',
-  AUDIO_NO_DISPONIBLE: 'No pude descargar el audio que enviaste. Probá reenviarlo o escribime el mensaje en texto.',
-  AUDIO_NO_TRANSCRIBIBLE: 'No pude entender el audio que enviaste. Probá grabarlo de nuevo o escribime el mensaje en texto.',
-  AUDIO_SIN_TEXTO: 'No detecté contenido hablado en el audio. Probá grabarlo de nuevo o escribime el mensaje en texto.',
-  CORRECCION_NO_ENTENDIDA:
-    'No entendí bien esa corrección, así que dejé la factura sin cambios. ¿Podés indicar puntualmente qué dato querés cambiar (cliente, producto, cantidad, precio o condición de venta)?',
-  PEDIR_DATOS_FACTURA:
-    'Contame los datos de la factura: nombre y RUC o cédula del cliente, y los productos o servicios con cantidad y precio.',
-  MENU_PRINCIPAL_LOG: '[Menú principal] Hola 😁 ¿Qué querés hacer?',
+  NO_SE_PUDO_INTERPRETAR: `⚠️ *No pude identificar con claridad todos los datos de la venta.*
+
+Por favor, enviame la información de esta forma:
+
+👤 Nombre del cliente:
+🪪 RUC o cédula:
+📦 Producto o servicio:
+🔢 Cantidad:
+💰 Precio unitario:
+
+Si hay más de un producto, escribí cada uno por separado con su cantidad y precio.
+Luego te mostraré el resumen para que puedas confirmar antes de emitir la factura.`,
+
+  FUERA_DE_ALCANCE: `🤖 *Eso se escapa un poco de lo que sé hacer.*
+
+Puedo ayudarte con:
+🧾 Emitir facturas electrónicas
+📄 Emitir notas de crédito
+❌ Cancelar documentos
+
+Contame cuál de estas necesitás 👍`,
+
+  OPENAI_NO_DISPONIBLE: `⏳ *Ups, tuve un problema para leer tu mensaje.*
+
+No es nada que hayas hecho mal 🙂
+Esperá unos segundos y enviámelo de nuevo, por favor.`,
+
+  YA_PROCESANDO: `⏳ *Tu factura ya está en camino.*
+
+La estoy procesando en este momento.
+En cuanto esté lista, te envío el documento por acá 📄`,
+
+  CANCELACION: `👍 *Listo, descarté la factura.*
+
+No se emitió nada, quedate tranqui.
+Cuando quieras arrancar de nuevo, escribime *"hola"* 👋`,
+
+  ERROR_EMISION: `❌ *No pude completar la emisión de la factura.*
+
+Tranqui: la operación quedó registrada y *no se va a emitir dos veces*.
+
+🕐 Probá de nuevo en unos minutos escribiéndome *"hola"*.
+Si el problema sigue, contactá a soporte y avisá que la factura quedó pendiente.`,
+
+  PROCESANDO_FACTURA: `⏳ *¡Perfecto! Estoy emitiendo tu factura...*
+
+Dame unos segundos ⚙️`,
+
+  FACTURA_PENDIENTE_APROBACION: `✅ *¡Tu factura fue enviada a la SET (SIFEN) para su aprobación!*
+
+📲 No hace falta que hagas nada más: en cuanto sea aprobada,
+te llega el *PDF automáticamente* por este chat.
+
+Suele demorar solo unos minutos ⏳`,
+
+  SOLO_TEXTO_SOPORTADO: `📝 *Por ahora solo puedo procesar mensajes de texto y audios.*
+
+Todavía no puedo leer imágenes ni archivos 🙏
+Escribime lo que necesitás y te ayudo con gusto.`,
+
+  AUDIO_NO_DISPONIBLE: `⚠️ *No pude descargar el audio que me enviaste.*
+
+Probá una de estas opciones:
+🔁 Reenviá el audio
+⌨️ O escribime el mensaje en texto`,
+
+  AUDIO_NO_TRANSCRIBIBLE: `⚠️ *No logré entender el audio.*
+
+Puede que haya mucho ruido de fondo o se escuche bajito 🎙️
+
+🔁 Probá grabarlo de nuevo, más cerca del micrófono
+⌨️ O escribime el mensaje en texto`,
+
+  AUDIO_SIN_TEXTO: `⚠️ *El audio llegó, pero no detecté ninguna voz.*
+
+🔁 Probá grabarlo de nuevo
+⌨️ O escribime el mensaje en texto`,
+
+  CORRECCION_NO_ENTENDIDA: `🤔 *No entendí bien qué querés cambiar, así que dejé todo como estaba.*
+
+Decime puntualmente el dato a corregir, por ejemplo:
+👤 *"el cliente es Juan Pérez"*
+💰 *"el precio es 150.000"*
+🔢 *"son 3 unidades"*
+
+Podés cambiar: cliente, producto, cantidad, precio o condición de venta.`,
+
+  PEDIR_DATOS_FACTURA: `✍️ *¡Vamos a emitir tu factura!*
+
+Enviame estos datos (puede ser todo junto en un mensaje, o por audio 🎙️):
+
+👤 Nombre del cliente
+🪪 RUC o cédula
+📦 Producto o servicio
+🔢 Cantidad
+💰 Precio unitario
+
+Ejemplo: _"Factura para Juan Pérez, cédula 4123456, 2 mouse inalámbricos a 150.000"_`,
+
+  MENU_PRINCIPAL_LOG: '[Menú principal] 👋 ¡Hola! Soy tu asistente de facturación. ¿Qué querés hacer?',
+
+  // Ambigüedad entre cancelar un documento por completo y emitir una nota de crédito
+  // parcial (ver detectarIntentoCancelacionDocumento en botOrchestrator.service.js).
+  CANC_VS_NC_AMBIGUO: `🤔 *Quiero asegurarme de entenderte bien. ¿Cuál de estas dos necesitás?*
+
+❌ *Cancelar el documento*: queda anulado por completo y pierde validez
+fiscal ante la SET.
+
+📄 *Nota de crédito*: acredita una parte (o el total) de una factura
+que sigue vigente. Es lo usual para devoluciones o descuentos.
+
+Respondeme *"cancelar"* o *"nota de crédito"* 👍`,
 
   // Flujo de nota de crédito.
-  NC_PEDIR_CDC:
-    'Contame el CDC de la factura que querés acreditar: el código de 44 dígitos que figura en el KuDE, debajo del código QR.',
-  NC_CDC_INVALIDO:
-    'El CDC debe tener exactamente 44 dígitos numéricos. Verificalo e indicámelo de nuevo (podés copiarlo tal como aparece en el KuDE, debajo del QR).',
-  NC_CDC_NO_ENCONTRADO:
-    'No encontré ninguna factura con ese CDC en tu empresa. Verificá que el código esté completo y que la factura haya sido emitida desde esta cuenta.',
-  NC_PEDIR_ITEMS: 'Contame qué ítems querés acreditar: descripción, cantidad y precio unitario de cada uno.',
-  NC_FACTURA_CANCELADA: 'Esa factura está cancelada, no se pueden emitir notas de crédito sobre ella.',
-  NC_FACTURA_NO_APROBADA:
-    'La factura todavía no fue aprobada por SIFEN. Hay que esperar la aprobación antes de acreditarla. Probá de nuevo en unos minutos.',
-  NC_SALDO_INSUFICIENTE:
-    '⚠️ No se pudo emitir: ya existen notas de crédito anteriores sobre esta factura y, sumadas a esta, superan el total facturado. El saldo disponible para acreditar es menor. Reducí el monto e intentá de nuevo.',
-  NC_CONFIG_FALTANTE:
-    'Falta configuración en tu empresa (establecimiento/caja). Contactá al administrador para completarla antes de emitir notas de crédito.',
-  NC_CONSULTA_NO_DISPONIBLE: 'No pude consultar la factura en este momento. Probá de nuevo en unos instantes.',
-  NC_ERROR_EMISION:
-    'No pudimos completar la emisión de la nota de crédito. La operación quedó registrada para evitar una emisión duplicada.',
-  NC_CANCELACION: 'La nota de crédito fue cancelada.',
-  NC_PROCESANDO: 'Tu nota de crédito está siendo emitida...',
-  NC_PENDIENTE_APROBACION:
-    '📲 Quedate tranquilo/a, en cuanto sea aprobada te enviaré el PDF automáticamente por este chat. 🚀',
-  NC_YA_PROCESANDO: 'La nota de crédito ya está siendo procesada. Te aviso cuando esté disponible.',
+  NC_PEDIR_CDC: `✍️ *¡Vamos a emitir una nota de crédito!*
+
+Primero necesito identificar la factura a acreditar.
+Enviame su *CDC*: el código de *44 números* que figura en el KuDE
+(el PDF de la factura), debajo del código QR 🔎`,
+
+  NC_CDC_INVALIDO: `⚠️ *El código que me enviaste no tiene el formato correcto.*
+
+El CDC son *exactamente 44 números*, sin letras ni espacios.
+Lo encontrás en el KuDE (el PDF de la factura), generalmente debajo del código de barras.
+
+Copialo completo y enviámelo de nuevo 🔎`,
+
+  NC_CDC_NO_ENCONTRADO: `⚠️ *No encontré ninguna factura con ese código en tu empresa.*
+
+Verificá que:
+🔎 el CDC esté completo (son *44 números*, figura en el KuDE de la factura)
+🏢 la factura haya sido emitida desde esta cuenta
+
+Cuando lo tengas, enviámelo de nuevo 👍`,
+
+  NC_PEDIR_ITEMS: `✍️ *Seguimos con tu nota de crédito 😉*
+
+Contame qué ítems querés acreditar:
+📦 Descripción
+🔢 Cantidad
+💰 Precio unitario`,
+
+  NC_FACTURA_CANCELADA: `❌ *Esa factura está cancelada.*
+
+Sobre una factura cancelada no se pueden emitir notas de crédito,
+porque ya no tiene validez fiscal.
+
+Si querés acreditar otra factura, enviame su CDC y arrancamos de nuevo 🔄`,
+
+  NC_FACTURA_NO_APROBADA: `⏳ *Esa factura todavía no fue aprobada por la SET (SIFEN).*
+
+Hay que esperar la aprobación antes de poder acreditarla.
+Suele demorar unos minutos ⌛
+
+Probá de nuevo en un rato enviándome el mismo CDC.`,
+
+  NC_SALDO_INSUFICIENTE: `⚠️ *El monto supera lo que queda disponible de esa factura.*
+
+Ya existen notas de crédito anteriores sobre esta factura y, sumando esta,
+se pasaría del total facturado.
+
+✏️ Bajá el monto de esta nota de crédito y confirmamos de nuevo.`,
+
+  NC_CONFIG_FALTANTE: `🔒 *Falta un dato de configuración en tu empresa para poder emitir notas de crédito.*
+
+Esto no lo podés resolver desde el chat: pedile al *administrador de tu cuenta*
+que complete la configuración de establecimiento y caja.
+
+Cuando esté listo, volvé a intentarlo por acá 👍`,
+
+  NC_CONSULTA_NO_DISPONIBLE: `⏳ *No pude consultar los datos de esa factura en este momento.*
+
+Es un problema temporal de conexión.
+Esperá unos instantes y enviame el código de nuevo, por favor.`,
+
+  NC_ERROR_EMISION: `❌ *No pude completar la emisión de la nota de crédito.*
+
+La operación quedó registrada y *no se va a emitir dos veces*.
+
+🕐 Probá de nuevo en unos minutos escribiéndome *"hola"*.
+Si el problema sigue, contactá a soporte.`,
+
+  NC_CANCELACION: `👍 *Listo, descarté la nota de crédito.*
+
+No se emitió nada.
+Cuando quieras arrancar de nuevo, escribime *"hola"* 👋`,
+
+  NC_PROCESANDO: `⏳ *¡Perfecto! Estoy emitiendo tu nota de crédito...*
+
+Dame unos segundos ⚙️`,
+
+  NC_PENDIENTE_APROBACION: `✅ *¡Tu nota de crédito fue enviada a la SET (SIFEN) para su aprobación!*
+
+📲 En cuanto sea aprobada, te llega el *PDF automáticamente* por este chat.
+Suele demorar solo unos minutos ⏳`,
+
+  NC_YA_PROCESANDO: `⏳ *Tu nota de crédito ya está en camino.*
+
+Te aviso por acá en cuanto esté disponible 📄`,
 
   // Flujo de cancelación de documentos (factura o nota de crédito ya emitidas).
-  CANC_PEDIR_TIPO: '¿Qué tipo de documento querés cancelar?\n1️⃣ Factura\n2️⃣ Nota de crédito',
-  CANC_PEDIR_CDC:
-    'Contame el CDC del documento que querés cancelar: el código de 44 dígitos que figura en el KuDE, debajo del código QR.',
-  CANC_CDC_INVALIDO:
-    'El CDC debe tener exactamente 44 dígitos numéricos. Verificalo e indicámelo de nuevo (podés copiarlo tal como aparece en el KuDE, debajo del QR).',
-  CANC_CDC_FORMATO_INVALIDO: 'El CDC no tiene el formato correcto (debe ser 44 dígitos). ¿Podés verificarlo y enviármelo de nuevo?',
-  CANC_CDC_NO_CORRESPONDE: 'Ese CDC no corresponde a ningún documento de tu empresa. Verificalo e intentá de nuevo.',
-  CANC_YA_CANCELADO: 'Ese documento ya está cancelado, no hay nada más que hacer. ✅',
-  CANC_SIN_CAJA: 'Hay una inconsistencia de configuración con este documento (sin caja asignada). Contactá al administrador para resolverla.',
-  CANC_CANCELACION: 'Se descartó la cancelación del documento.',
-  CANC_PROCESANDO: 'Estoy procesando la cancelación del documento...',
-  CANC_YA_PROCESANDO: 'La cancelación ya está siendo procesada. Te aviso en cuanto tenga novedades.',
-  CANC_ERROR:
-    'No pude comunicarme con SIFEN para procesar la cancelación. El documento NO fue cancelado. Intentá de nuevo en unos minutos; si persiste, contactá al soporte.',
+  CANC_PEDIR_TIPO: `✍️ *Vamos a cancelar un documento.*
+
+¿Qué tipo de documento es?
+
+1️⃣ 🧾 Factura
+2️⃣ 📄 Nota de crédito
+
+Respondeme con el número o el nombre 👍`,
+
+  CANC_PEDIR_CDC: `✍️ *Ahora enviame el CDC del documento a cancelar.*
+
+Es el código de *44 números* que figura en el KuDE,
+debajo del código QR 🔎`,
+
+  CANC_CDC_INVALIDO: `⚠️ *El código que me enviaste no tiene el formato correcto.*
+
+El CDC son *exactamente 44 números*, sin letras ni espacios.
+Lo encontrás en el KuDE del documento, debajo del código de barras.
+
+Copialo completo y enviámelo de nuevo 🔎`,
+
+  CANC_CDC_FORMATO_INVALIDO: `⚠️ *El código no tiene el formato correcto.*
+
+El CDC debe tener *44 números exactos*.
+¿Podés verificarlo en el KuDE y enviármelo de nuevo? 🔎`,
+
+  CANC_CDC_NO_CORRESPONDE: `❌ *Ese código no corresponde a ningún documento de tu empresa.*
+
+Ya lo busqué como factura y como nota de crédito, y no aparece.
+
+🔎 Verificá el CDC en el KuDE del documento y, cuando lo tengas,
+escribime de nuevo para empezar otra cancelación.`,
+
+  CANC_YA_CANCELADO: `✅ *¡Buenas noticias! Ese documento ya está cancelado.*
+
+No hace falta hacer nada más 👍
+¿Te ayudo con otra cosa?`,
+
+  CANC_SIN_CAJA: `🔒 *Encontré una inconsistencia de configuración con este documento.*
+
+Esto no lo podés resolver desde el chat: contactá al *administrador de tu cuenta*
+para que lo revise. Cuando esté resuelto, volvé a intentarlo por acá.`,
+
+  CANC_CANCELACION: `👍 *Perfecto, no cancelo nada.*
+
+El documento *sigue vigente*, tal como estaba ✅
+¿Te ayudo con otra cosa?`,
+
+  CANC_PROCESANDO: `⏳ *Estoy procesando la cancelación ante la SET (SIFEN)...*
+
+Dame unos segundos ⚙️`,
+
+  CANC_YA_PROCESANDO: `⏳ *La cancelación ya está en proceso.*
+
+Te aviso por acá en cuanto tenga novedades.`,
+
+  CANC_ERROR: `❌ *No pude comunicarme con la SET (SIFEN) para procesar la cancelación.*
+
+‼️ Importante: *el documento NO fue cancelado*, sigue vigente.
+
+🕐 Probá de nuevo en unos minutos.
+Si el problema persiste, contactá a soporte.`,
 });
 
 // Valores posibles de SesionConversacional.operacionActiva: qué operación del menú

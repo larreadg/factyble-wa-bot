@@ -30,4 +30,21 @@ const findContactoActivoByNumero = (numeroTelefono) => {
   });
 };
 
-module.exports = { createContacto, findContactoActivoByNumero };
+const desactivarContacto = async (numeroTelefono) => {
+  const contacto = await prisma.contacto.findUnique({ where: { numeroTelefono } });
+
+  if (!contacto) {
+    throw new AppError('No existe un contacto con ese número de teléfono', 404);
+  }
+
+  if (!contacto.activo) {
+    throw new AppError('El contacto ya está inactivo', 409);
+  }
+
+  return prisma.contacto.update({
+    where: { numeroTelefono },
+    data: { activo: false },
+  });
+};
+
+module.exports = { createContacto, findContactoActivoByNumero, desactivarContacto };

@@ -22,4 +22,23 @@ const create = async (req, res) => {
   }
 };
 
-module.exports = { create };
+const desactivar = async (req, res) => {
+  const { numeroTelefono } = req.params;
+
+  try {
+    const contacto = await contactoService.desactivarContacto(numeroTelefono);
+    const response = Response.success(contacto, 'Contacto desactivado exitosamente', 200);
+    res.status(response.code).json(response);
+  } catch (error) {
+    if (error instanceof AppError) {
+      const response = Response.error(error.message, error.statusCode);
+      return res.status(response.code).json(response);
+    }
+
+    logger.error('Error al desactivar contacto', error);
+    const response = Response.error('Error interno del servidor', 500);
+    res.status(response.code).json(response);
+  }
+};
+
+module.exports = { create, desactivar };

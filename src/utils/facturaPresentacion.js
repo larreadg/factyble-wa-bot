@@ -1,59 +1,45 @@
 const { formatearGuaranies } = require('./moneda');
 
 const construirMensajeCamposFaltantes = (camposFaltantes, { intentoConfirmar = false, advertencias = [] } = {}) => {
-  const lineas = camposFaltantes.map((campo) => `- ${campo}.`);
-  const intro = intentoConfirmar ? 'Todavía no puedo emitir la factura: antes necesito' : 'Para preparar la factura todavía necesito';
-  const bloqueAdvertencias = advertencias.length ? `\n\n${advertencias.map((advertencia) => `⚠️ ${advertencia}`).join('\n')}` : '';
-  return `${intro}:\n\n${lineas.join('\n')}${bloqueAdvertencias}`;
+  const lineas = camposFaltantes.map((campo) => `🔸 _${campo}_`).join('\n');
+  const bloqueAdvertencias = advertencias.length ? `\n\n${advertencias.map((advertencia) => `⚠️ _${advertencia}_`).join('\n')}` : '';
+
+  if (intentoConfirmar) {
+    return `✋ *Un momento: todavía no puedo emitir la factura.*\n\nAntes necesito:\n${lineas}${bloqueAdvertencias}\n\nEn cuanto me los pases, confirmamos 👍`;
+  }
+
+  return `✍️ *¡Vamos bien! Solo me faltan estos datos:*\n\n${lineas}${bloqueAdvertencias}\n\nEnviámelos y te muestro el resumen para confirmar 👍`;
 };
 
-const construirResumenConfirmacion = (borrador) => {
-  const lineasItems = borrador.items
-    .map((item, indice) => {
-      return [
-        `*${indice + 1}. ${item.descripcion}*`,
-        '',
-        `🔢 Cantidad: *${item.cantidad}*`,
-        `💰 Precio unitario: *${formatearGuaranies(item.precioUnitario)}*`,
-        `📊 IVA: *${item.tasa}*`,
-        `🧮 Subtotal: *${formatearGuaranies(item.subtotal)}*`,
-      ].join('\n');
-    })
-    .join('\n\n');
+const construirLineaItem = (item) =>
+  [
+    `📦 ${item.descripcion}`,
+    `    ${item.cantidad} × ${formatearGuaranies(item.precioUnitario)} — IVA ${item.tasa} — Subtotal: ${formatearGuaranies(item.subtotal)}`,
+  ].join('\n');
 
+const construirResumenConfirmacion = (borrador) => {
+  const lineasItems = borrador.items.map(construirLineaItem).join('\n');
   const condicionVentaTexto = borrador.condicionVenta === 'CREDITO' ? 'Crédito' : 'Contado';
   const etiquetaDocumento = borrador.cliente.tipoDocumento === 'CI' ? 'Cédula' : 'RUC';
-  const separador = '━━━━━━━━━━━━━━';
+  const separador = '━━━━━━━━━━━━━━━';
 
   return [
-    '🧾 *¡Tu factura está casi lista!*',
-    '',
-    'Por favor, revisá los datos antes de emitirla:',
-    '',
-    '👤 *Cliente*',
-    borrador.cliente.nombre,
-    '',
-    `🪪 *${etiquetaDocumento}*`,
-    borrador.cliente.numeroDocumento,
-    '',
-    '💳 *Condición de venta*',
-    condicionVentaTexto,
-    '',
+    '📋 *Resumen de tu factura*',
     separador,
+    `👤 Cliente: *${borrador.cliente.nombre}*`,
+    `🪪 ${etiquetaDocumento}: *${borrador.cliente.numeroDocumento}*`,
+    `💳 Condición: *${condicionVentaTexto}*`,
     '',
-    '📦 *Detalle de la factura*',
-    '',
+    '🛒 *Detalle:*',
     lineasItems,
     '',
     separador,
-    '',
-    `💵 *Total general: ${formatearGuaranies(borrador.totales.totalGeneral)}*`,
+    `💰 *TOTAL: ${formatearGuaranies(borrador.totales.totalGeneral)}*`,
     '',
     '¿Está todo correcto? 😊',
-    '',
-    '✅ Respondé *SÍ* para emitir la factura.',
-    '✏️ Escribí la corrección que necesitás realizar.',
-    '❌ Respondé *CANCELAR* para detener la emisión.',
+    '✅ Escribí *"sí"* para emitir',
+    '✏️ O decime qué querés corregir',
+    '❌ O escribí *"cancelar"* para descartar',
   ].join('\n');
 };
 

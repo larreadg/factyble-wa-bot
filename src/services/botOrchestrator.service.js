@@ -162,7 +162,7 @@ const registrarDocumentoEmitido = async (datos) => {
 };
 
 const construirMensajeDatosRechazados = (detalle) =>
-  `No pudimos emitir la factura: la API de facturación rechazó algunos datos${detalle ? ` (${detalle})` : ''}. Revisá los datos, indicá la corrección que haga falta y volvé a confirmar.`;
+  `⚠️ *No pude emitir la factura: hay un dato que necesita corrección.*\n\n📋 Motivo: _${detalle || 'dato inválido'}_\n\n✏️ Decime qué dato querés cambiar (por ejemplo: *"el RUC es 80012345-6"*)\ny cuando esté todo bien, confirmamos de nuevo. Tus datos siguen guardados,\nno hace falta cargar todo otra vez.`;
 
 // Detalle del chat a Telegram (ver chatExport.service.js): fire-and-forget, nunca se
 // awaitea desde acá porque no debe bloquear ni poder romper la respuesta al usuario
@@ -515,11 +515,7 @@ const procesarConParser = async ({ contacto, conversacion, sesion, texto, esCont
     const intento = detectarIntentoCancelacionDocumento(texto);
 
     if (intento === 'AMBIGUO') {
-      await responderYRegistrar(
-        conversacion,
-        contacto,
-        '¿Querés anular completamente el documento (pierde validez fiscal ante SIFEN) o generar una nota de crédito parcial sobre una factura que sigue vigente? Contame cuál de las dos necesitás.',
-      );
+      await responderYRegistrar(conversacion, contacto, MENSAJES.CANC_VS_NC_AMBIGUO);
       return;
     }
 
@@ -688,7 +684,7 @@ const mapNotaCreditoEmisionError = (error) => {
   }
   if (error.type === 'VALIDATION') {
     return {
-      mensaje: `No se pudo emitir la nota de crédito: ${msg}. Indicame la corrección que haga falta.`,
+      mensaje: `⚠️ *No pude emitir la nota de crédito.*\n\n📋 Motivo: _${msg}_\n\n✏️ Decime qué dato querés corregir y volvemos a intentar.\nLo que ya cargaste sigue guardado.`,
       resetCdc: false,
       volverAConfirmacion: true,
     };

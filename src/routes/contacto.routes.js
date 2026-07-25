@@ -7,5 +7,6 @@ const contactoValidator = require('../validators/contacto.validator');
 const router = Router();
 
 router.post('/contacto', apiKeyMiddleware, contactoValidator.create, validate, contactoController.create);
+router.patch('/contacto/:numeroTelefono/desactivar', apiKeyMiddleware, contactoValidator.desactivar, validate, contactoController.desactivar);
 
 module.exports = router;

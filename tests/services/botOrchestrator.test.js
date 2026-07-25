@@ -218,7 +218,7 @@ test('caso 1: solicitud completa deja la sesión en ESPERANDO_CONFIRMACION con e
 
   assert.equal(sesion.estado, ESTADOS_SESION.ESPERANDO_CONFIRMACION);
   const [resumen] = textoEnviado(salientes);
-  assert.ok(resumen.includes('Total general: Gs. 75.000'));
+  assert.ok(resumen.includes('TOTAL: Gs. 75.000'));
   assert.ok(resumen.includes('Diego Larrea'));
 });
 
@@ -284,7 +284,7 @@ test('accion=CONFIRMAR sin datos suficientes no emite: pide completar antes de p
 
   assert.equal(emitirSpy.mock.callCount(), 0);
   assert.equal(sesion.estado, ESTADOS_SESION.CAPTURANDO_DATOS);
-  assert.ok(textoEnviado(salientes)[0].includes('Todavía no puedo emitir'));
+  assert.ok(textoEnviado(salientes)[0].includes('todavía no puedo emitir'));
 });
 
 test('caso 9: accion=CONFIRMAR en ESPERANDO_CONFIRMACION intenta la transición atómica y emite', async (t) => {
@@ -692,7 +692,7 @@ test('NC: el monto a acreditar mayor al total de la factura avisa y no avanza a 
   await botOrchestrator.procesarMensajeEntrante(mensajeTexto('2 sillas a 100000 cada una'));
 
   assert.equal(sesion.estado, ESTADOS_SESION.CAPTURANDO_DATOS);
-  assert.ok(textoEnviado(salientes)[0].includes('supera el total de la factura'));
+  assert.ok(textoEnviado(salientes)[0].includes('monto a acreditar es mayor que el saldo'));
 });
 
 const borradorNCListoParaConfirmar = () =>
@@ -981,8 +981,8 @@ test('CANC: un HTTP 200 con estadoSifen distinto de CANCELADO NUNCA se informa c
   assert.equal(sesion.estado, ESTADOS_SESION.ERROR);
   const textos = textoEnviado(salientes);
   assert.ok(!textos.some((m) => m.includes('Documento cancelado')));
-  assert.ok(textos.some((m) => m.includes('SIFEN rechazó la cancelación')));
-  assert.ok(textos.some((m) => m.includes('nota de crédito en su lugar')));
+  assert.ok(textos.some((m) => m.includes('rechazó la cancelación')));
+  assert.ok(textos.some((m) => m.includes('la alternativa es emitir una')));
 });
 
 test('CANC: doble confirmación concurrente solo dispara una cancelación', async (t) => {
@@ -1027,7 +1027,7 @@ test('CANC: 404 en el primer intento sugiere el tipo alternativo sin abortar', a
   assert.equal(sesion.estado, ESTADOS_SESION.ESPERANDO_CONFIRMACION);
   assert.equal(sesion.datosTemporales.sugerirTipoAlternativo, true);
   assert.equal(sesion.datosTemporales.intentoAlternativoUsado, true);
-  assert.ok(textoEnviado(salientes).some((m) => m.includes('¿Puede ser que sea una nota de crédito?')));
+  assert.ok(textoEnviado(salientes).some((m) => m.includes('¿Puede ser que en realidad sea una *nota de crédito*?')));
 });
 
 test('CANC: aceptar el tipo alternativo cambia el tipo y vuelve a pedir confirmación (no llama a la API todavía)', async (t) => {
@@ -1100,7 +1100,7 @@ test('CANC: documento no aprobado todavía no se puede cancelar', async (t) => {
   await botOrchestrator.procesarMensajeEntrante(mensajeTexto('confirmo'));
 
   assert.equal(sesion.estado, ESTADOS_SESION.ERROR);
-  assert.ok(textoEnviado(salientes).some((m) => m.includes('estado actual: PENDIENTE')));
+  assert.ok(textoEnviado(salientes).some((m) => m.includes('Estado actual: *PENDIENTE*')));
 });
 
 test('CANC: un mensaje mientras está PROCESANDO no se pierde', async (t) => {
@@ -1149,5 +1149,5 @@ test('CANC: pedido ambiguo entre cancelación total y devolución parcial pregun
   assert.equal(cancParserSpy.mock.callCount(), 0);
   assert.equal(facturaParserSpy.mock.callCount(), 0);
   assert.equal(sesion.operacionActiva, null);
-  assert.ok(textoEnviado(salientes)[0].includes('nota de crédito parcial'));
+  assert.ok(textoEnviado(salientes)[0].includes('acredita una parte (o el total)'));
 });

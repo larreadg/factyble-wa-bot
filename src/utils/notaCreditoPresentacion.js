@@ -4,50 +4,51 @@ const { formatearGuaranies } = require('./moneda');
 // para no saturar el chat con el código completo cada vez que se resume el estado.
 const abreviarCdc = (cdc) => (cdc && cdc.length > 8 ? `${cdc.slice(0, 4)}...${cdc.slice(-4)}` : cdc);
 
-const construirMensajeTotalEncontrado = ({ total, totalIva }) =>
-  `✅ Encontré la factura. Total: ${formatearGuaranies(total)} (IVA ${formatearGuaranies(totalIva)}). ¿Qué ítems querés acreditar?`;
+const construirMensajeTotalEncontrado = ({ total, totalIva }) => `✅ *¡Encontré la factura!*
 
-const construirMensajeMontoExcedeTotal = (totalAcreditar, totalFactura) =>
-  `⚠️ El total de la nota de crédito (${formatearGuaranies(totalAcreditar)}) supera el total de la factura (${formatearGuaranies(totalFactura)}). El monto acreditado no puede ser mayor al facturado. ¿Querés ajustar las cantidades o precios?`;
+💰 Total facturado: *${formatearGuaranies(total)}*
+🧾 IVA incluido: ${formatearGuaranies(totalIva)}
+
+Ahora contame *qué querés acreditar*:
+📦 Producto o servicio
+🔢 Cantidad
+💰 Precio unitario
+
+Puede ser una parte o el total de la factura.`;
+
+const construirMensajeMontoExcedeTotal = (totalAcreditar, totalFactura) => `⚠️ *El monto a acreditar es mayor que el saldo de la factura.*
+
+💰 Querés acreditar: *${formatearGuaranies(totalAcreditar)}*
+📄 Saldo disponible de la factura: *${formatearGuaranies(totalFactura)}*
+
+Ajustá las cantidades o precios de la nota de crédito para que no supere
+ese saldo, y volvemos a intentar ✏️`;
+
+const construirLineaItemNC = (item) =>
+  [`📦 ${item.descripcion}`, `    ${item.cantidad} × ${formatearGuaranies(item.precioUnitario)} — Subtotal: ${formatearGuaranies(item.subtotal)}`].join(
+    '\n',
+  );
 
 const construirResumenConfirmacionNC = (borrador) => {
-  const lineasItems = borrador.items
-    .map((item, indice) => {
-      return [
-        `*${indice + 1}. ${item.descripcion}*`,
-        '',
-        `🔢 Cantidad: *${item.cantidad}*`,
-        `💰 Precio unitario: *${formatearGuaranies(item.precioUnitario)}*`,
-        `📊 IVA: *${item.tasa}*`,
-        `🧮 Subtotal: *${formatearGuaranies(item.subtotal)}*`,
-      ].join('\n');
-    })
-    .join('\n\n');
-
-  const separador = '━━━━━━━━━━━━━━';
+  const lineasItems = borrador.items.map(construirLineaItemNC).join('\n');
+  const separador = '━━━━━━━━━━━━━━━';
 
   return [
-    '📋 *Resumen de Nota de Crédito*',
-    '',
-    '🧾 *Factura original*',
-    `CDC: ${abreviarCdc(borrador.cdc)}`,
-    `Total facturado: ${formatearGuaranies(borrador.totalFactura)}`,
-    '',
+    '📋 *Resumen de tu nota de crédito*',
     separador,
+    `🔗 Sobre la factura CDC: ${abreviarCdc(borrador.cdc)}`,
+    `💰 Total facturado: ${formatearGuaranies(borrador.totalFactura)}`,
     '',
-    '📦 *Ítems a acreditar*',
-    '',
+    '🛒 *Vas a acreditar:*',
     lineasItems,
     '',
     separador,
-    '',
-    `💵 *Total NC: ${formatearGuaranies(borrador.totales.totalAcreditar)}*`,
+    `💰 *TOTAL A ACREDITAR: ${formatearGuaranies(borrador.totales.totalAcreditar)}*`,
     '',
     '¿Confirmás la emisión? 😊',
-    '',
-    '✅ Respondé *SÍ* para emitir la nota de crédito.',
-    '✏️ Escribí la corrección que necesitás realizar.',
-    '❌ Respondé *CANCELAR* para detener la emisión.',
+    '✅ Escribí *"sí"* para emitir',
+    '✏️ O decime qué querés corregir',
+    '❌ O escribí *"cancelar"* para descartar',
   ].join('\n');
 };
 

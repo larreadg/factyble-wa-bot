@@ -1,4 +1,4 @@
-const { body } = require('express-validator');
+const { body, param } = require('express-validator');
 
 const create = [
   body('empresaRuc')
@@ -17,4 +17,12 @@ const create = [
     .isString().withMessage('nombre debe ser un texto'),
 ];
 
-module.exports = { create };
+const desactivar = [
+  param('numeroTelefono')
+    .trim()
+    .notEmpty().withMessage('numeroTelefono es requerido')
+    .bail()
+    .matches(/^\d{6,15}$/).withMessage('numeroTelefono debe contener solo dígitos (6-15)'),
+];
+
+module.exports = { create, desactivar };

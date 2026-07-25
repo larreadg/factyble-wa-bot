@@ -27,7 +27,10 @@ test('APROBADO: descarga el PDF público, lo sube a WhatsApp y lo envía con el 
   assert.equal(uploadSpy.mock.calls[0].arguments[2], 'application/pdf');
 
   assert.equal(enviarSpy.mock.calls[0].arguments[0], '595981234567');
-  assert.deepEqual(enviarSpy.mock.calls[0].arguments[1], { id: 'media-123', filename: 'b3c1-uuid.pdf', caption: '001-001-0000045' });
+  const { caption, ...resto } = enviarSpy.mock.calls[0].arguments[1];
+  assert.deepEqual(resto, { id: 'media-123', filename: 'b3c1-uuid.pdf' });
+  assert.ok(caption.includes('Factura aprobada'));
+  assert.ok(caption.includes('001-001-0000045'));
 });
 
 test('APROBADO sin pdfNombre: no intenta descargar ni subir nada, y lanza (para no marcarse como notificado)', async (t) => {

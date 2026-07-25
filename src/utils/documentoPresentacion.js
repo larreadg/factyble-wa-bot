@@ -33,9 +33,15 @@ const construirMensajeError = (documento) => {
 };
 
 const construirCaptionPdf = (documento) => {
-  const etiqueta = documento.tipo === 'FACTURA' ? 'Factura' : 'Nota de crédito';
-  if (!documento.numeroDocumentoFormateado) return etiqueta;
-  return `${etiqueta} nro.: ${documento.numeroDocumentoFormateado}`;
+  const esFactura = documento.tipo === 'FACTURA';
+  const etiqueta = esFactura ? 'Factura' : 'Nota de crédito';
+  const emoji = esFactura ? '🧾' : '📄';
+
+  if (!documento.numeroDocumentoFormateado) return `✅ *¡${etiqueta} aprobada!* 🎉`;
+
+  return [`✅ *¡${etiqueta} aprobada!* 🎉`, `${emoji} ${etiqueta} nro. *${documento.numeroDocumentoFormateado}*`, '', 'Ya podés reenviarla a tu cliente 📤'].join(
+    '\n',
+  );
 };
 
 module.exports = { construirMensajeRechazado, construirMensajeError, construirCaptionPdf };
