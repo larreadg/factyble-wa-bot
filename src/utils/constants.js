@@ -83,7 +83,7 @@ Si el problema sigue, contactá a soporte y avisá que la factura quedó pendien
 
 Dame unos segundos ⚙️`,
 
-  FACTURA_PENDIENTE_APROBACION: `✅ *¡Tu factura fue enviada a la SET (SIFEN) para su aprobación!*
+  FACTURA_PENDIENTE_APROBACION: `✅ *¡Tu factura fue enviada a la DNIT (SIFEN) para su aprobación!*
 
 📲 No hace falta que hagas nada más: en cuanto sea aprobada,
 te llega el *PDF automáticamente* por este chat.
@@ -141,7 +141,7 @@ Ejemplo: _"Factura para Juan Pérez, cédula 4123456, 2 mouse inalámbricos a 15
   CANC_VS_NC_AMBIGUO: `🤔 *Quiero asegurarme de entenderte bien. ¿Cuál de estas dos necesitás?*
 
 ❌ *Cancelar el documento*: queda anulado por completo y pierde validez
-fiscal ante la SET.
+fiscal ante la DNIT.
 
 📄 *Nota de crédito*: acredita una parte (o el total) de una factura
 que sigue vigente. Es lo usual para devoluciones o descuentos.
@@ -184,7 +184,7 @@ porque ya no tiene validez fiscal.
 
 Si querés acreditar otra factura, enviame su CDC y arrancamos de nuevo 🔄`,
 
-  NC_FACTURA_NO_APROBADA: `⏳ *Esa factura todavía no fue aprobada por la SET (SIFEN).*
+  NC_FACTURA_NO_APROBADA: `⏳ *Esa factura todavía no fue aprobada por la DNIT (SIFEN).*
 
 Hay que esperar la aprobación antes de poder acreditarla.
 Suele demorar unos minutos ⌛
@@ -226,7 +226,7 @@ Cuando quieras arrancar de nuevo, escribime *"hola"* 👋`,
 
 Dame unos segundos ⚙️`,
 
-  NC_PENDIENTE_APROBACION: `✅ *¡Tu nota de crédito fue enviada a la SET (SIFEN) para su aprobación!*
+  NC_PENDIENTE_APROBACION: `✅ *¡Tu nota de crédito fue enviada a la DNIT (SIFEN) para su aprobación!*
 
 📲 En cuanto sea aprobada, te llega el *PDF automáticamente* por este chat.
 Suele demorar solo unos minutos ⏳`,
@@ -284,7 +284,7 @@ para que lo revise. Cuando esté resuelto, volvé a intentarlo por acá.`,
 El documento *sigue vigente*, tal como estaba ✅
 ¿Te ayudo con otra cosa?`,
 
-  CANC_PROCESANDO: `⏳ *Estoy procesando la cancelación ante la SET (SIFEN)...*
+  CANC_PROCESANDO: `⏳ *Estoy procesando la cancelación ante la DNIT (SIFEN)...*
 
 Dame unos segundos ⚙️`,
 
@@ -292,7 +292,7 @@ Dame unos segundos ⚙️`,
 
 Te aviso por acá en cuanto tenga novedades.`,
 
-  CANC_ERROR: `❌ *No pude comunicarme con la SET (SIFEN) para procesar la cancelación.*
+  CANC_ERROR: `❌ *No pude comunicarme con la DNIT (SIFEN) para procesar la cancelación.*
 
 ‼️ Importante: *el documento NO fue cancelado*, sigue vigente.
 

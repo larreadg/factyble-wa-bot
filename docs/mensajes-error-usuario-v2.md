@@ -136,7 +136,7 @@ Reescritura de todos los textos de error del bot con foco en claridad, tono cerc
 
 ### `NC_FACTURA_NO_APROBADA`
 
-> ⏳ *Esa factura todavía no fue aprobada por la SET (SIFEN).*
+> ⏳ *Esa factura todavía no fue aprobada por la DNIT (SIFEN).*
 >
 > Hay que esperar la aprobación antes de poder acreditarla.
 > Suele demorar unos minutos ⌛
@@ -218,7 +218,7 @@ Reescritura de todos los textos de error del bot con foco en claridad, tono cerc
 
 > ❌ *No se puede cancelar esta factura.*
 >
-> Tiene *<N> nota(s) de crédito aprobada(s)* vinculada(s), y la SET no permite
+> Tiene *<N> nota(s) de crédito aprobada(s)* vinculada(s), y la DNIT no permite
 > cancelar una factura en esa situación.
 >
 > 💡 Si necesitás dejarla sin efecto, la alternativa es emitir una
@@ -229,7 +229,7 @@ Reescritura de todos los textos de error del bot con foco en claridad, tono cerc
 > ⚠️ *Ese documento no se puede cancelar todavía.*
 >
 > 📄 Estado actual: *<estado>*
-> Solo se pueden cancelar documentos *aprobados* por la SET.
+> Solo se pueden cancelar documentos *aprobados* por la DNIT.
 >
 > ⏳ Si lo emitiste hace poco, esperá unos minutos y volvé a intentar.
 
@@ -249,7 +249,7 @@ Reescritura de todos los textos de error del bot con foco en claridad, tono cerc
 
 ### `CANC_ERROR`
 
-> ❌ *No pude comunicarme con la SET (SIFEN) para procesar la cancelación.*
+> ❌ *No pude comunicarme con la DNIT (SIFEN) para procesar la cancelación.*
 >
 > ‼️ Importante: *el documento NO fue cancelado*, sigue vigente.
 >
@@ -258,7 +258,7 @@ Reescritura de todos los textos de error del bot con foco en claridad, tono cerc
 
 ### Rechazo de SIFEN — `construirMensajeRechazoSifen(<resultado>)`
 
-> ⚠️ *La SET (SIFEN) rechazó la cancelación.*
+> ⚠️ *La DNIT (SIFEN) rechazó la cancelación.*
 >
 > 📄 El documento sigue en estado: *<estado>*
 > 📋 Motivo: _<mensaje>_ (código <código>)
@@ -333,7 +333,7 @@ Reescritura de todos los textos de error del bot con foco en claridad, tono cerc
 > 🤔 *Quiero asegurarme de entenderte bien. ¿Cuál de estas dos necesitás?*
 >
 > ❌ *Cancelar el documento*: queda anulado por completo y pierde validez
-> fiscal ante la SET.
+> fiscal ante la DNIT.
 >
 > 📄 *Nota de crédito*: acredita una parte (o el total) de una factura
 > que sigue vigente. Es lo usual para devoluciones o descuentos.

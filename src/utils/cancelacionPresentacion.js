@@ -11,7 +11,7 @@ const construirResumenConfirmacionCancelacion = (borrador) =>
     `🔗 CDC: ${abreviarCdc(borrador.cdc)}`,
     '',
     '‼️ *Atención: esta acción es irreversible.*',
-    'El documento quedará *anulado y sin validez fiscal* ante la SET.',
+    'El documento quedará *anulado y sin validez fiscal* ante la DNIT.',
     '',
     '¿Confirmás la cancelación?',
     '✅ Escribí *"sí"* para cancelar el documento',
@@ -52,7 +52,7 @@ const construirMensajeCancelacionExitosa = ({ cdc, estadoSifen }) =>
 // alternativa para revertir el efecto de la factura.
 const construirMensajeRechazoSifen = ({ estadoSifen, mensajeRespuesta, codigoRespuesta }) => {
   const base = [
-    '⚠️ *La SET (SIFEN) rechazó la cancelación.*',
+    '⚠️ *La DNIT (SIFEN) rechazó la cancelación.*',
     '',
     `📄 El documento sigue en estado: *${estadoSifen ?? 'desconocido'}*`,
     `📋 Motivo: _${mensajeRespuesta ?? 'no informado'}_${codigoRespuesta ? ` (código ${codigoRespuesta})` : ''}`,
@@ -69,7 +69,7 @@ const construirMensajeNotaCreditoVinculadas = (mensajeApi) => {
   return [
     '❌ *No se puede cancelar esta factura.*',
     '',
-    `Tiene *${detalle}* vinculada(s), y la SET no permite`,
+    `Tiene *${detalle}* vinculada(s), y la DNIT no permite`,
     'cancelar una factura en esa situación.',
     '',
     '💡 Si necesitás dejarla sin efecto, la alternativa es emitir una',
@@ -80,7 +80,7 @@ const construirMensajeNotaCreditoVinculadas = (mensajeApi) => {
 const construirMensajeEstadoNoAprobado = (mensajeApi) => {
   const match = (mensajeApi || '').match(/estado actual:?\s*([A-Za-zÁÉÍÓÚÑ_]+)/i);
   const lineaEstado = match ? `\n\n📄 Estado actual: *${match[1]}*` : '';
-  return `⚠️ *Ese documento no se puede cancelar todavía.*${lineaEstado}\nSolo se pueden cancelar documentos *aprobados* por la SET.\n\n⏳ Si lo emitiste hace poco, esperá unos minutos y volvé a intentar.`;
+  return `⚠️ *Ese documento no se puede cancelar todavía.*${lineaEstado}\nSolo se pueden cancelar documentos *aprobados* por la DNIT.\n\n⏳ Si lo emitiste hace poco, esperá unos minutos y volvé a intentar.`;
 };
 
 module.exports = {

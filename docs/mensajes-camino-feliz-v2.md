@@ -114,7 +114,7 @@ Variante cuando el usuario ya intentó confirmar:
 
 ### Paso 5 — `FACTURA_PENDIENTE_APROBACION`
 
-> ✅ *¡Tu factura fue enviada a la SET (SIFEN) para su aprobación!*
+> ✅ *¡Tu factura fue enviada a la DNIT (SIFEN) para su aprobación!*
 >
 > 📲 No hace falta que hagas nada más: en cuanto sea aprobada,
 > te llega el *PDF automáticamente* por este chat.
@@ -197,7 +197,7 @@ Mismo helper y formato que factura (sección 2, paso 2).
 
 ### Paso 6 — `NC_PENDIENTE_APROBACION`
 
-> ✅ *¡Tu nota de crédito fue enviada a la SET (SIFEN) para su aprobación!*
+> ✅ *¡Tu nota de crédito fue enviada a la DNIT (SIFEN) para su aprobación!*
 >
 > 📲 En cuanto sea aprobada, te llega el *PDF automáticamente* por este chat.
 > Suele demorar solo unos minutos ⏳
@@ -240,7 +240,7 @@ Mismo helper y formato que factura (sección 2, paso 2).
 > 🔗 CDC: <abreviado>...
 >
 > ‼️ *Atención: esta acción es irreversible.*
-> El documento quedará *anulado y sin validez fiscal* ante la SET.
+> El documento quedará *anulado y sin validez fiscal* ante la DNIT.
 >
 > ¿Confirmás la cancelación?
 > ✅ Escribí *"sí"* para cancelar el documento
@@ -248,7 +248,7 @@ Mismo helper y formato que factura (sección 2, paso 2).
 
 ### Paso 4 — `CANC_PROCESANDO`
 
-> ⏳ *Estoy procesando la cancelación ante la SET (SIFEN)...*
+> ⏳ *Estoy procesando la cancelación ante la DNIT (SIFEN)...*
 >
 > Dame unos segundos ⚙️
 
