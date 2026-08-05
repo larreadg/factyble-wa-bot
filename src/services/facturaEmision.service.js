@@ -18,10 +18,10 @@ const construirPayload = ({ cliente, condicionVenta, items }) => ({
 });
 
 /**
- * No descarga ni envía el PDF: la factura queda FIRMADA pero pendiente de aprobación
- * en SIFEN (asíncrono, vía cron del backend de facturación), así que todavía no hay
- * nada que mostrarle al cliente. El PDF se descarga y envía recién cuando se conoce el
- * estado final (ver documento.service.js).
+ * No descarga ni envía el PDF acá: solo emite. La factura queda FIRMADA (todavía
+ * pendiente de aprobación asíncrona en SIFEN), pero el PDF ya está generado y en disco
+ * cuando /factura/simple responde, así que el orquestador lo descarga y se lo envía al
+ * cliente en el acto, sin esperar el estado final (ver botOrchestrator.service.js).
  * @param {{ empresa: object, cliente: {nombre: string, tipoDocumento: 'RUC'|'CI', numeroDocumento: string}, condicionVenta: 'CONTADO'|'CREDITO', items: Array<{descripcion: string, cantidad: number, precioUnitario: number, tasa: '0%'|'5%'|'10%'}>, totales: {subtotal: number, totalGeneral: number}, idempotencyKey: string }} params
  * @returns {Promise<{ documentoId: string, numero: string, numeroFormateado: string, cdc: string, pdfNombre: string, clienteNombre: string, clienteDocumento: string, estadoSifen: string, sifenEstadoMensaje: string }>}
  */

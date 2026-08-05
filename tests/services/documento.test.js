@@ -100,21 +100,3 @@ test('actualizarEstados: un cdc sin fila que le corresponda (count 0) no rompe e
 
   assert.deepEqual(resultados, [{ count: 0 }, { count: 1 }]);
 });
-
-test('listarPendientesDeNotificar: consulta documentos en estado final sin notificar aún', async (t) => {
-  const findSpy = mockProp(t, prisma.documento, 'findMany', async () => [{ id: 1, estadoSifen: 'APROBADO' }]);
-
-  const pendientes = await documentoService.listarPendientesDeNotificar();
-
-  assert.deepEqual(findSpy.calls[0][0], { where: { estadoSifen: { in: ['APROBADO', 'RECHAZADO', 'ERROR'] }, notificadoEn: null } });
-  assert.equal(pendientes.length, 1);
-});
-
-test('marcarNotificado: setea notificadoEn a la fecha actual', async (t) => {
-  const updateSpy = mockProp(t, prisma.documento, 'update', async ({ data }) => ({ id: 5, ...data }));
-
-  await documentoService.marcarNotificado(5);
-
-  assert.equal(updateSpy.calls[0][0].where.id, 5);
-  assert.ok(updateSpy.calls[0][0].data.notificadoEn instanceof Date);
-});

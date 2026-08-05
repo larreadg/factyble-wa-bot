@@ -39,6 +39,7 @@ const notaCreditoEmisionService = require('./notaCreditoEmision.service');
 const cancelacionParserService = require('./cancelacionParser.service');
 const cancelacionDocumentoService = require('./cancelacionDocumento.service');
 const documentoService = require('./documento.service');
+const documentoNotificacionService = require('./documentoNotificacion.service');
 const transcripcionService = require('./transcripcion.service');
 const chatExportService = require('./chatExport.service');
 const { OpenAIServiceError } = require('./openai.errors');
@@ -161,6 +162,21 @@ const registrarDocumentoEmitido = async (datos) => {
   }
 };
 
+// Entrega el PDF al cliente apenas se emite (síncrono, ver documentoNotificacion.service.js).
+// Antes esto se hacía de forma asíncrona recién cuando SIFEN aprobaba, pero SIFEN demora y
+// falla de forma poco fiable; como el PDF ya está firmado y en disco al responder la API de
+// facturación, se envía en el acto. Best-effort: si el envío falla (descarga/WhatsApp), la
+// factura igual quedó emitida, así que no se corta el flujo — se avisa por texto y listo (no
+// hay reintento asíncrono). `documento` es el mismo objeto que se pasa a registrarDocumentoEmitido.
+const entregarPdfAlCliente = async ({ conversacion, contacto, documento, mensajeFallback }) => {
+  try {
+    await documentoNotificacionService.enviarPdf(documento);
+  } catch (error) {
+    logger.error('Error entregando el PDF al cliente tras emitir', { ...safeError(error), cdc: documento.cdc, tipo: documento.tipo });
+    await responderYRegistrar(conversacion, contacto, mensajeFallback);
+  }
+};
+
 const construirMensajeDatosRechazados = (detalle) =>
   `⚠️ *No pude emitir la factura: hay un dato que necesita corrección.*\n\n📋 Motivo: _${detalle || 'dato inválido'}_\n\n✏️ Decime qué dato querés cambiar (por ejemplo: *"el RUC es 80012345-6"*)\ny cuando esté todo bien, confirmamos de nuevo. Tus datos siguen guardados,\nno hace falta cargar todo otra vez.`;
 
@@ -231,7 +247,7 @@ const confirmarYEmitir = async ({ contacto, conversacion, sesion, borrador }) =>
     return;
   }
 
-  await registrarDocumentoEmitido({
+  const documento = {
     empresaId: contacto.empresa.id,
     numeroTelefono: contacto.numeroTelefono,
     tipo: 'FACTURA',
@@ -242,7 +258,9 @@ const confirmarYEmitir = async ({ contacto, conversacion, sesion, borrador }) =>
     clienteDocumento: resultado.clienteDocumento,
     estadoSifen: resultado.estadoSifen,
     sifenEstadoMensaje: resultado.sifenEstadoMensaje,
-  });
+  };
+
+  await registrarDocumentoEmitido(documento);
 
   const datosCompletados = {
     ...datosConKey,
@@ -255,7 +273,8 @@ const confirmarYEmitir = async ({ contacto, conversacion, sesion, borrador }) =>
 
   await sesionConversacionalService.transicionar(sesion.id, [ESTADOS_SESION.PROCESANDO], ESTADOS_SESION.COMPLETADA, datosCompletados);
   notificarFinDeChat(conversacion, contacto, sesion, ESTADOS_SESION.COMPLETADA);
-  await responderYRegistrar(conversacion, contacto, MENSAJES.FACTURA_PENDIENTE_APROBACION);
+  // El PDF (con su caption) es el mensaje de éxito: no se envía además ningún texto.
+  await entregarPdfAlCliente({ conversacion, contacto, documento, mensajeFallback: MENSAJES.FACTURA_EMITIDA_SIN_PDF });
 };
 
 // ---- Flujo de cancelación de documentos (factura o nota de crédito ya emitidas) ----
@@ -725,7 +744,7 @@ const confirmarYEmitirNotaCredito = async ({ contacto, conversacion, sesion, bor
     return;
   }
 
-  await registrarDocumentoEmitido({
+  const documento = {
     empresaId: contacto.empresa.id,
     numeroTelefono: contacto.numeroTelefono,
     tipo: 'NOTA_CREDITO',
@@ -736,12 +755,15 @@ const confirmarYEmitirNotaCredito = async ({ contacto, conversacion, sesion, bor
     clienteDocumento: resultado.clienteDocumento,
     estadoSifen: resultado.estadoSifen,
     sifenEstadoMensaje: resultado.sifenEstadoMensaje,
-  });
+  };
+
+  await registrarDocumentoEmitido(documento);
 
   const datosCompletados = { ...borrador, resultadoEmision: resultado };
   await sesionConversacionalService.transicionar(sesion.id, [ESTADOS_SESION.PROCESANDO], ESTADOS_SESION.COMPLETADA, datosCompletados);
   notificarFinDeChat(conversacion, contacto, sesion, ESTADOS_SESION.COMPLETADA);
-  await responderYRegistrar(conversacion, contacto, MENSAJES.NC_PENDIENTE_APROBACION);
+  // El PDF (con su caption) es el mensaje de éxito: no se envía además ningún texto.
+  await entregarPdfAlCliente({ conversacion, contacto, documento, mensajeFallback: MENSAJES.NC_EMITIDA_SIN_PDF });
 };
 
 // Único punto de entrada para cualquier mensaje de texto mientras operacionActiva ===

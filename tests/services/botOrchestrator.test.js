@@ -13,6 +13,7 @@ const notaCreditoEmisionService = require('../../src/services/notaCreditoEmision
 const cancelacionParserService = require('../../src/services/cancelacionParser.service');
 const cancelacionDocumentoService = require('../../src/services/cancelacionDocumento.service');
 const documentoService = require('../../src/services/documento.service');
+const documentoNotificacionService = require('../../src/services/documentoNotificacion.service');
 const { FacturaApiError } = require('../../src/services/facturaApi.errors');
 const { borradorVacio, construirBorrador } = require('../../src/services/facturaBorrador.service');
 const { borradorVacio: borradorVacioNC, construirBorrador: construirBorradorNC } = require('../../src/services/notaCreditoBorrador.service');
@@ -125,7 +126,15 @@ const setupMundo = (
     return { id: documentosRegistrados.length, ...data };
   });
 
-  return { sesion, salientes, documentosRegistrados };
+  // Igual que registrarEmision: toda emisión exitosa entrega el PDF al cliente en el acto
+  // (descarga el PDF + lo sube a WhatsApp, red real si no se mockea). Se captura el
+  // documento entregado; los tests que quieran simular una falla de envío re-mockean esto.
+  const pdfsEnviados = [];
+  t.mock.method(documentoNotificacionService, 'enviarPdf', async (documento) => {
+    pdfsEnviados.push(documento);
+  });
+
+  return { sesion, salientes, documentosRegistrados, pdfsEnviados };
 };
 
 const mensajeTexto = (body, overrides = {}) => ({
@@ -308,13 +317,13 @@ test('caso 9: accion=CONFIRMAR en ESPERANDO_CONFIRMACION intenta la transición 
   assert.ok(textoEnviado(salientes).includes(MENSAJES.ERROR_EMISION));
 });
 
-test('emisión exitosa: registra el Documento y avisa que la factura quedó pendiente de aprobación, sin enviar PDF', async (t) => {
+test('emisión exitosa: registra el Documento y le entrega el PDF al cliente en el acto (sin mensaje de pendiente)', async (t) => {
   const borrador = construirBorrador(
     { cliente: { nombre: 'Diego Larrea', tipoDocumento: 'RUC', numeroDocumento: '5249657-0' }, condicionVenta: 'CONTADO', items: [{ descripcion: 'Borrador', cantidad: 1, precioUnitario: 5000, tasa: '10%' }] },
     null,
     [],
   );
-  const { sesion, salientes, documentosRegistrados } = setupMundo(t, { sesionEstado: ESTADOS_SESION.ESPERANDO_CONFIRMACION, datosTemporales: borrador });
+  const { sesion, salientes, documentosRegistrados, pdfsEnviados } = setupMundo(t, { sesionEstado: ESTADOS_SESION.ESPERANDO_CONFIRMACION, datosTemporales: borrador });
   t.mock.method(facturaParserService, 'interpretar', async () => salidaParser('CONFIRMAR', facturaDesdeBorrador(borrador)));
 
   const emitirSpy = t.mock.method(facturaEmisionService, 'emitirFactura', async () => ({
@@ -326,18 +335,20 @@ test('emisión exitosa: registra el Documento y avisa que la factura quedó pend
     estadoSifen: 'FIRMADO',
     sifenEstadoMensaje: null,
   }));
-  const enviarDocSpy = t.mock.method(whatsappService, 'sendDocumentMessage', async () => {
-    throw new Error('no debería llamarse: el PDF ya no se envía en esta iteración');
-  });
 
   await botOrchestrator.procesarMensajeEntrante(mensajeTexto('si'));
 
   assert.equal(emitirSpy.mock.callCount(), 1);
-  assert.equal(enviarDocSpy.mock.callCount(), 0);
   assert.equal(sesion.estado, ESTADOS_SESION.COMPLETADA);
   const textos = textoEnviado(salientes);
   assert.ok(textos.includes(MENSAJES.PROCESANDO_FACTURA));
-  assert.ok(textos.includes(MENSAJES.FACTURA_PENDIENTE_APROBACION));
+  // El PDF es el mensaje de éxito: no se manda el fallback (solo se envía si falla la entrega).
+  assert.ok(!textos.includes(MENSAJES.FACTURA_EMITIDA_SIN_PDF));
+
+  assert.equal(pdfsEnviados.length, 1);
+  assert.equal(pdfsEnviados[0].tipo, 'FACTURA');
+  assert.equal(pdfsEnviados[0].pdfNombre, 'b3c1-uuid.pdf');
+  assert.equal(pdfsEnviados[0].numeroTelefono, CONTACTO.numeroTelefono);
 
   assert.equal(documentosRegistrados.length, 1);
   assert.equal(documentosRegistrados[0].tipo, 'FACTURA');
@@ -348,13 +359,40 @@ test('emisión exitosa: registra el Documento y avisa que la factura quedó pend
   assert.equal(documentosRegistrados[0].numeroDocumentoFormateado, '001-001-0000045');
 });
 
-test('si falla el registro local del Documento tras emitir, la sesión igual llega a COMPLETADA (la factura ya fue emitida en SIFEN, es irreversible)', async (t) => {
+test('emisión exitosa pero falla la entrega del PDF: la sesión llega a COMPLETADA y se avisa por texto (sin reintento async)', async (t) => {
   const borrador = construirBorrador(
     { cliente: { nombre: 'Diego Larrea', tipoDocumento: 'RUC', numeroDocumento: '5249657-0' }, condicionVenta: 'CONTADO', items: [{ descripcion: 'Borrador', cantidad: 1, precioUnitario: 5000, tasa: '10%' }] },
     null,
     [],
   );
   const { sesion, salientes } = setupMundo(t, { sesionEstado: ESTADOS_SESION.ESPERANDO_CONFIRMACION, datosTemporales: borrador });
+  t.mock.method(facturaParserService, 'interpretar', async () => salidaParser('CONFIRMAR', facturaDesdeBorrador(borrador)));
+  t.mock.method(facturaEmisionService, 'emitirFactura', async () => ({
+    documentoId: 123,
+    numero: 45,
+    numeroFormateado: '001-001-0000045',
+    cdc: '01800695921001001000000012024071410238123456',
+    pdfNombre: 'b3c1-uuid.pdf',
+    estadoSifen: 'FIRMADO',
+  }));
+  // Sobreescribe el mock por defecto de setupMundo para simular que la entrega del PDF falla.
+  t.mock.method(documentoNotificacionService, 'enviarPdf', async () => {
+    throw new Error('WhatsApp no disponible');
+  });
+
+  await botOrchestrator.procesarMensajeEntrante(mensajeTexto('si'));
+
+  assert.equal(sesion.estado, ESTADOS_SESION.COMPLETADA);
+  assert.ok(textoEnviado(salientes).includes(MENSAJES.FACTURA_EMITIDA_SIN_PDF));
+});
+
+test('si falla el registro local del Documento tras emitir, la sesión igual llega a COMPLETADA (la factura ya fue emitida en SIFEN, es irreversible)', async (t) => {
+  const borrador = construirBorrador(
+    { cliente: { nombre: 'Diego Larrea', tipoDocumento: 'RUC', numeroDocumento: '5249657-0' }, condicionVenta: 'CONTADO', items: [{ descripcion: 'Borrador', cantidad: 1, precioUnitario: 5000, tasa: '10%' }] },
+    null,
+    [],
+  );
+  const { sesion, salientes, pdfsEnviados } = setupMundo(t, { sesionEstado: ESTADOS_SESION.ESPERANDO_CONFIRMACION, datosTemporales: borrador });
   t.mock.method(facturaParserService, 'interpretar', async () => salidaParser('CONFIRMAR', facturaDesdeBorrador(borrador)));
   t.mock.method(facturaEmisionService, 'emitirFactura', async () => ({
     documentoId: 123,
@@ -371,7 +409,9 @@ test('si falla el registro local del Documento tras emitir, la sesión igual lle
   await botOrchestrator.procesarMensajeEntrante(mensajeTexto('si'));
 
   assert.equal(sesion.estado, ESTADOS_SESION.COMPLETADA);
-  assert.ok(textoEnviado(salientes).includes(MENSAJES.FACTURA_PENDIENTE_APROBACION));
+  // El PDF igual se entrega (el registro local es best-effort, no bloquea la entrega).
+  assert.equal(pdfsEnviados.length, 1);
+  assert.ok(!textoEnviado(salientes).includes(MENSAJES.FACTURA_EMITIDA_SIN_PDF));
 });
 
 test('caso 10: dos confirmaciones simultáneas solo disparan una emisión', async (t) => {
@@ -701,9 +741,9 @@ const borradorNCListoParaConfirmar = () =>
     { ...borradorVacioNC(), cdc: CDC_NC, totalFactura: 550000, totalIvaFactura: 50000 },
   );
 
-test('NC: confirmar en ESPERANDO_CONFIRMACION emite la nota de crédito, la registra en Documento y avisa que quedó pendiente de aprobación', async (t) => {
+test('NC: confirmar en ESPERANDO_CONFIRMACION emite la nota de crédito, la registra en Documento y entrega el PDF en el acto', async (t) => {
   const borrador = borradorNCListoParaConfirmar();
-  const { sesion, salientes, documentosRegistrados } = setupMundo(t, {
+  const { sesion, salientes, documentosRegistrados, pdfsEnviados } = setupMundo(t, {
     sesionEstado: ESTADOS_SESION.ESPERANDO_CONFIRMACION,
     operacionActiva: OPERACIONES.NOTA_CREDITO,
     datosTemporales: borrador,
@@ -726,7 +766,11 @@ test('NC: confirmar en ESPERANDO_CONFIRMACION emite la nota de crédito, la regi
   assert.equal(sesion.estado, ESTADOS_SESION.COMPLETADA);
   const textos = textoEnviado(salientes);
   assert.ok(textos.includes(MENSAJES.NC_PROCESANDO));
-  assert.ok(textos.includes(MENSAJES.NC_PENDIENTE_APROBACION));
+  assert.ok(!textos.includes(MENSAJES.NC_EMITIDA_SIN_PDF));
+
+  assert.equal(pdfsEnviados.length, 1);
+  assert.equal(pdfsEnviados[0].tipo, 'NOTA_CREDITO');
+  assert.equal(pdfsEnviados[0].pdfNombre, 'nc-uuid.pdf');
 
   assert.equal(documentosRegistrados.length, 1);
   assert.equal(documentosRegistrados[0].tipo, 'NOTA_CREDITO');
@@ -737,7 +781,7 @@ test('NC: confirmar en ESPERANDO_CONFIRMACION emite la nota de crédito, la regi
 
 test('NC: si falla el registro local del Documento tras emitir, la sesión igual llega a COMPLETADA', async (t) => {
   const borrador = borradorNCListoParaConfirmar();
-  const { sesion, salientes } = setupMundo(t, {
+  const { sesion, salientes, pdfsEnviados } = setupMundo(t, {
     sesionEstado: ESTADOS_SESION.ESPERANDO_CONFIRMACION,
     operacionActiva: OPERACIONES.NOTA_CREDITO,
     datosTemporales: borrador,
@@ -758,7 +802,9 @@ test('NC: si falla el registro local del Documento tras emitir, la sesión igual
   await botOrchestrator.procesarMensajeEntrante(mensajeTexto('si, confirmo'));
 
   assert.equal(sesion.estado, ESTADOS_SESION.COMPLETADA);
-  assert.ok(textoEnviado(salientes).includes(MENSAJES.NC_PENDIENTE_APROBACION));
+  // El PDF igual se entrega (el registro local es best-effort, no bloquea la entrega).
+  assert.equal(pdfsEnviados.length, 1);
+  assert.ok(!textoEnviado(salientes).includes(MENSAJES.NC_EMITIDA_SIN_PDF));
 });
 
 test('NC: doble confirmación concurrente solo dispara una emisión', async (t) => {

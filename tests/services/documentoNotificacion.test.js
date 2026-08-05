@@ -4,23 +4,23 @@ const documentoNotificacionService = require('../../src/services/documentoNotifi
 const facturaApiService = require('../../src/services/facturaApi.service');
 const whatsappService = require('../../src/services/whatsapp.service');
 
-const DOCUMENTO_APROBADO = {
+const DOCUMENTO = {
   id: 1,
   numeroTelefono: '595981234567',
   tipo: 'FACTURA',
   cdc: 'cdc-1',
   pdfNombre: 'b3c1-uuid.pdf',
   numeroDocumentoFormateado: '001-001-0000045',
-  estadoSifen: 'APROBADO',
+  estadoSifen: 'FIRMADO',
   sifenEstadoMensaje: null,
 };
 
-test('APROBADO: descarga el PDF público, lo sube a WhatsApp y lo envía con el numeroDocumentoFormateado como caption', async (t) => {
+test('enviarPdf: descarga el PDF público, lo sube a WhatsApp y lo envía con el numeroDocumentoFormateado como caption', async (t) => {
   const descargarSpy = t.mock.method(facturaApiService, 'descargarPdf', async () => Buffer.from('contenido-pdf'));
   const uploadSpy = t.mock.method(whatsappService, 'uploadMedia', async () => ({ id: 'media-123' }));
   const enviarSpy = t.mock.method(whatsappService, 'sendDocumentMessage', async () => ({ messages: [{ id: 'wamid.1' }] }));
 
-  await documentoNotificacionService.enviarPorEstado(DOCUMENTO_APROBADO);
+  await documentoNotificacionService.enviarPdf(DOCUMENTO);
 
   assert.equal(descargarSpy.mock.calls[0].arguments[0], 'b3c1-uuid.pdf');
   assert.equal(uploadSpy.mock.calls[0].arguments[1], 'b3c1-uuid.pdf');
@@ -29,87 +29,25 @@ test('APROBADO: descarga el PDF público, lo sube a WhatsApp y lo envía con el 
   assert.equal(enviarSpy.mock.calls[0].arguments[0], '595981234567');
   const { caption, ...resto } = enviarSpy.mock.calls[0].arguments[1];
   assert.deepEqual(resto, { id: 'media-123', filename: 'b3c1-uuid.pdf' });
-  assert.ok(caption.includes('Factura aprobada'));
+  assert.ok(caption.includes('Factura emitida'));
   assert.ok(caption.includes('001-001-0000045'));
 });
 
-test('APROBADO sin pdfNombre: no intenta descargar ni subir nada, y lanza (para no marcarse como notificado)', async (t) => {
+test('enviarPdf: una nota de crédito usa la etiqueta correcta en el caption', async (t) => {
+  t.mock.method(facturaApiService, 'descargarPdf', async () => Buffer.from('contenido-pdf'));
+  t.mock.method(whatsappService, 'uploadMedia', async () => ({ id: 'media-123' }));
+  const enviarSpy = t.mock.method(whatsappService, 'sendDocumentMessage', async () => ({ messages: [{ id: 'wamid.1' }] }));
+
+  await documentoNotificacionService.enviarPdf({ ...DOCUMENTO, tipo: 'NOTA_CREDITO' });
+
+  assert.ok(enviarSpy.mock.calls[0].arguments[1].caption.includes('Nota de crédito emitida'));
+});
+
+test('enviarPdf sin pdfNombre: no intenta descargar ni subir nada, y lanza (para que el caller use el fallback)', async (t) => {
   const descargarSpy = t.mock.method(facturaApiService, 'descargarPdf', async () => {
     throw new Error('no debería llamarse');
   });
 
-  await assert.rejects(() => documentoNotificacionService.enviarPorEstado({ ...DOCUMENTO_APROBADO, pdfNombre: null }));
+  await assert.rejects(() => documentoNotificacionService.enviarPdf({ ...DOCUMENTO, pdfNombre: null }));
   assert.equal(descargarSpy.mock.callCount(), 0);
-});
-
-test('RECHAZADO: envía un mensaje de texto con el motivo de SIFEN', async (t) => {
-  const enviarSpy = t.mock.method(whatsappService, 'sendTextMessage', async () => ({ messages: [{ id: 'wamid.1' }] }));
-
-  await documentoNotificacionService.enviarPorEstado({
-    ...DOCUMENTO_APROBADO,
-    estadoSifen: 'RECHAZADO',
-    sifenEstadoMensaje: 'RUC no encontrado en el padrón',
-  });
-
-  assert.equal(enviarSpy.mock.calls[0].arguments[0], '595981234567');
-  assert.ok(enviarSpy.mock.calls[0].arguments[1].includes('RUC no encontrado en el padrón'));
-  assert.ok(enviarSpy.mock.calls[0].arguments[1].includes('rechazada'));
-});
-
-test('RECHAZADO: incluye nombre y documento del cliente cuando están cargados', async (t) => {
-  const enviarSpy = t.mock.method(whatsappService, 'sendTextMessage', async () => ({ messages: [{ id: 'wamid.1' }] }));
-
-  await documentoNotificacionService.enviarPorEstado({
-    ...DOCUMENTO_APROBADO,
-    estadoSifen: 'RECHAZADO',
-    sifenEstadoMensaje: 'RUC del receptor inexistente en la base de datos de Marangatu',
-    clienteNombre: 'Diego Larrea',
-    clienteDocumento: '5249657-0',
-  });
-
-  assert.ok(enviarSpy.mock.calls[0].arguments[1].includes('Cliente: Diego Larrea (5249657-0)'));
-});
-
-test('RECHAZADO sin datos del cliente: no agrega la línea de cliente', async (t) => {
-  const enviarSpy = t.mock.method(whatsappService, 'sendTextMessage', async () => ({ messages: [{ id: 'wamid.1' }] }));
-
-  await documentoNotificacionService.enviarPorEstado({
-    ...DOCUMENTO_APROBADO,
-    estadoSifen: 'RECHAZADO',
-    sifenEstadoMensaje: 'motivo',
-    clienteNombre: null,
-    clienteDocumento: null,
-  });
-
-  assert.ok(!enviarSpy.mock.calls[0].arguments[1].includes('Cliente:'));
-});
-
-test('RECHAZADO en una nota de crédito usa la etiqueta correcta', async (t) => {
-  const enviarSpy = t.mock.method(whatsappService, 'sendTextMessage', async () => ({ messages: [{ id: 'wamid.1' }] }));
-
-  await documentoNotificacionService.enviarPorEstado({ ...DOCUMENTO_APROBADO, tipo: 'NOTA_CREDITO', estadoSifen: 'RECHAZADO', sifenEstadoMensaje: 'motivo' });
-
-  assert.ok(enviarSpy.mock.calls[0].arguments[1].includes('nota de crédito'));
-});
-
-test('ERROR: envía un mensaje pidiendo contactar a soporte', async (t) => {
-  const enviarSpy = t.mock.method(whatsappService, 'sendTextMessage', async () => ({ messages: [{ id: 'wamid.1' }] }));
-
-  await documentoNotificacionService.enviarPorEstado({ ...DOCUMENTO_APROBADO, estadoSifen: 'ERROR', sifenEstadoMensaje: null });
-
-  assert.ok(enviarSpy.mock.calls[0].arguments[1].includes('wa.me/595976788698'));
-});
-
-test('estado no final (ej. FIRMADO): no envía nada', async (t) => {
-  const enviarTextoSpy = t.mock.method(whatsappService, 'sendTextMessage', async () => {
-    throw new Error('no debería llamarse');
-  });
-  const enviarDocSpy = t.mock.method(whatsappService, 'sendDocumentMessage', async () => {
-    throw new Error('no debería llamarse');
-  });
-
-  await documentoNotificacionService.enviarPorEstado({ ...DOCUMENTO_APROBADO, estadoSifen: 'FIRMADO' });
-
-  assert.equal(enviarTextoSpy.mock.callCount(), 0);
-  assert.equal(enviarDocSpy.mock.callCount(), 0);
 });

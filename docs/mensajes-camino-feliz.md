@@ -32,8 +32,7 @@ Fuente: `src/utils/constants.js` (objeto `MENSAJES`), `src/services/botOrchestra
 | 2. Datos incompletos (puede repetirse varias veces) | `construirMensajeCamposFaltantes(...)` — dinámico: "Para preparar la factura todavía necesito:\n- `<campo>`.\n..." (o "Todavía no puedo emitir la factura: antes necesito..." si el usuario ya intentó confirmar); agrega advertencias `⚠️` si las hay | `facturaPresentacion.js:3-8`, usado en `procesarConParser` línea 617-621 |
 | 3. Datos completos → resumen de confirmación | `construirResumenConfirmacion(borrador)` — dinámico: tarjeta con cliente, RUC/cédula, condición de venta, detalle de ítems (cantidad/precio/IVA/subtotal) y total general, cerrando con "¿Está todo correcto? 😊 / ✅ SÍ / ✏️ corrección / ❌ CANCELAR" | `facturaPresentacion.js:10-58`, usado en línea 634 |
 | 4. Usuario confirma | `PROCESANDO_FACTURA`: "Tu factura está siendo emitida..." | línea 204 |
-| 5. Emisión aceptada por la API de facturación | `FACTURA_PENDIENTE_APROBACION`: "📲 Quedate tranquilo/a, en cuanto sea aprobada te enviaré el PDF automáticamente por este chat. 🚀" | línea 258 |
-| 6. SIFEN aprueba (async, vía cron) | Se envía el **PDF** como documento adjunto, con caption `construirCaptionPdf(documento)`: "Factura nro.: `<numeroDocumentoFormateado>`" (o solo "Factura" si aún no hay número) | `documentoNotificacion.service.js:7-20` (`enviarAprobado`), caption en `documentoPresentacion.js:35-39` |
+| 5. Emisión aceptada por la API de facturación → se entrega el **PDF en el acto** | Se envía el PDF como documento adjunto (la factura queda FIRMADA; el PDF ya está en disco al responder la API, no se espera la aprobación asíncrona de SIFEN), con caption `construirCaptionPdf(documento)`: "¡Factura aprobada! 🎉 · Factura nro. `<numeroDocumentoFormateado>`". El caption es el mensaje de éxito: no se envía además ningún texto | `entregarPdfAlCliente` (`botOrchestrator.service.js`), `documentoNotificacion.service.js` (`enviarPdf`), caption en `documentoPresentacion.js` |
 
 ---
 
@@ -47,8 +46,7 @@ Fuente: `src/utils/constants.js` (objeto `MENSAJES`), `src/services/botOrchestra
 | 3. Ítems incompletos | `construirMensajeCamposFaltantes(...)` (mismo helper que factura) | línea 857-861 |
 | 4. Todo completo → resumen de confirmación | `construirResumenConfirmacionNC(borrador)` — dinámico: tarjeta con CDC abreviado, total facturado, detalle de ítems a acreditar y total de la NC, cerrando con "¿Confirmás la emisión? 😊 / ✅ SÍ / ✏️ corrección / ❌ CANCELAR" | `notaCreditoPresentacion.js:13-52`, usado en línea 880 |
 | 5. Usuario confirma | `NC_PROCESANDO`: "Tu nota de crédito está siendo emitida..." | línea 709 |
-| 6. Emisión aceptada | `NC_PENDIENTE_APROBACION`: "📲 Quedate tranquilo/a, en cuanto sea aprobada te enviaré el PDF automáticamente por este chat. 🚀" | línea 748 |
-| 7. SIFEN aprueba (async, vía cron) | PDF adjunto con caption "Nota de crédito nro.: `<numero>`" (mismo mecanismo que factura) | `documentoNotificacion.service.js:7-20` |
+| 6. Emisión aceptada → se entrega el **PDF en el acto** | PDF adjunto con caption "¡Nota de crédito aprobada! 🎉 · Nota de crédito nro. `<numero>`" (mismo mecanismo que factura, sin esperar la aprobación asíncrona de SIFEN) | `entregarPdfAlCliente` (`botOrchestrator.service.js`), `documentoNotificacion.service.js` (`enviarPdf`) |
 
 ---
 
@@ -89,11 +87,11 @@ Menú principal
                   └─▶ Resumen de confirmación
                        └─▶ "SÍ"
                             └─▶ PROCESANDO_FACTURA
-                                 └─▶ FACTURA_PENDIENTE_APROBACION
-                                      └─▶ (async, SIFEN aprueba) PDF + caption
+                                 └─▶ (emisión aceptada) PDF + caption, en el acto
 ```
 
-El mismo patrón (pedir datos → resumen → procesando → pendiente de aprobación → PDF)
-se repite para nota de crédito, con un paso extra al principio (consulta de la factura
-original por CDC). Cancelación de documento es más corta: no hay aprobación asíncrona,
-la confirmación de SIFEN llega en la misma llamada.
+El mismo patrón (pedir datos → resumen → procesando → PDF en el acto) se repite para nota
+de crédito, con un paso extra al principio (consulta de la factura original por CDC). El
+PDF se entrega apenas la API de facturación acepta la emisión, sin esperar la aprobación
+asíncrona de SIFEN. Cancelación de documento es más corta: no hay PDF, la confirmación de
+SIFEN llega en la misma llamada.

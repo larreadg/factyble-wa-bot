@@ -83,12 +83,12 @@ Si el problema sigue, contactá a soporte y avisá que la factura quedó pendien
 
 Dame unos segundos ⚙️`,
 
-  FACTURA_PENDIENTE_APROBACION: `✅ *¡Tu factura fue enviada a la DNIT (SIFEN) para su aprobación!*
+  // Fallback: la factura ya se emitió, pero no se pudo adjuntar el PDF por este chat en el
+  // momento (falla al descargarlo o al subirlo a WhatsApp). No hay reintento automático.
+  FACTURA_EMITIDA_SIN_PDF: `✅ *¡Tu factura fue emitida correctamente!*
 
-📲 No hace falta que hagas nada más: en cuanto sea aprobada,
-te llega el *PDF automáticamente* por este chat.
-
-Suele demorar solo unos minutos ⏳`,
+Sin embargo, no pude adjuntarte el PDF por este chat en este momento 😕
+Contactá a soporte (wa.me/595976788698) para que te lo hagan llegar 📄`,
 
   SOLO_TEXTO_SOPORTADO: `📝 *Por ahora solo puedo procesar mensajes de texto y audios.*
 
@@ -226,10 +226,12 @@ Cuando quieras arrancar de nuevo, escribime *"hola"* 👋`,
 
 Dame unos segundos ⚙️`,
 
-  NC_PENDIENTE_APROBACION: `✅ *¡Tu nota de crédito fue enviada a la DNIT (SIFEN) para su aprobación!*
+  // Fallback (igual que FACTURA_EMITIDA_SIN_PDF): la NC se emitió, pero no se pudo
+  // adjuntar el PDF por este chat en el momento. No hay reintento automático.
+  NC_EMITIDA_SIN_PDF: `✅ *¡Tu nota de crédito fue emitida correctamente!*
 
-📲 En cuanto sea aprobada, te llega el *PDF automáticamente* por este chat.
-Suele demorar solo unos minutos ⏳`,
+Sin embargo, no pude adjuntarte el PDF por este chat en este momento 😕
+Contactá a soporte (wa.me/595976788698) para que te lo hagan llegar 📄`,
 
   NC_YA_PROCESANDO: `⏳ *Tu nota de crédito ya está en camino.*
 

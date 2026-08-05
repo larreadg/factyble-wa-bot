@@ -1,12 +1,17 @@
 const facturaApiService = require('./facturaApi.service');
 const whatsappService = require('./whatsapp.service');
-const { construirMensajeRechazado, construirMensajeError, construirCaptionPdf } = require('../utils/documentoPresentacion');
+const { construirCaptionPdf } = require('../utils/documentoPresentacion');
 
-// GET /public/<pdfNombre> es un endpoint público (ver facturaApi.service.js): no hace
-// falta autenticarse contra la API de facturación para descargar el PDF acá.
-const enviarAprobado = async (documento) => {
+// Descarga el PDF (GET /public/<pdfNombre> es un endpoint público, ver facturaApi.service.js:
+// no hace falta autenticarse para bajarlo) y lo envía al cliente por WhatsApp con su caption.
+//
+// Se llama de forma SÍNCRONA apenas se emite (ver botOrchestrator.service.js): la
+// factura/NC queda FIRMADA y el PDF ya está escrito en disco cuando /factura/simple
+// responde, así que no se espera la aprobación asíncrona de SIFEN para entregarlo. SIFEN
+// aprueba con demoras y de forma poco fiable; el cliente prefiere el PDF firmado al toque.
+const enviarPdf = async (documento) => {
   if (!documento.pdfNombre) {
-    throw new Error(`Documento ${documento.id} (cdc ${documento.cdc}) está APROBADO pero no tiene pdfNombre`);
+    throw new Error(`Documento (cdc ${documento.cdc}) no tiene pdfNombre: no hay PDF para enviar`);
   }
 
   const pdfBuffer = await facturaApiService.descargarPdf(documento.pdfNombre);
@@ -19,11 +24,4 @@ const enviarAprobado = async (documento) => {
   });
 };
 
-const enviarPorEstado = (documento) => {
-  if (documento.estadoSifen === 'APROBADO') return enviarAprobado(documento);
-  if (documento.estadoSifen === 'RECHAZADO') return whatsappService.sendTextMessage(documento.numeroTelefono, construirMensajeRechazado(documento));
-  if (documento.estadoSifen === 'ERROR') return whatsappService.sendTextMessage(documento.numeroTelefono, construirMensajeError(documento));
-  return Promise.resolve();
-};
-
-module.exports = { enviarPorEstado };
+module.exports = { enviarPdf };

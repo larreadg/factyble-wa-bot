@@ -96,23 +96,22 @@ también falla, cae en alguna de las dos filas de arriba.
 
 ---
 
-## 4.3 Notificación asíncrona final (`documentoNotificacion.service.js`, fuera de `botOrchestrator`)
+## 4.3 Falla al entregar el PDF tras emitir (`entregarPdfAlCliente`, `botOrchestrator.service.js`)
 
-Se dispara desde un proceso aparte (cron que consulta el estado en SIFEN) cuando la
-factura/NC quedó `PROCESANDO` en el paso 2/3 de emisión y finalmente se resuelve. No pasa
-por `botOrchestrator.service.js` ni actualiza `SesionConversacional` — solo envía el
-mensaje/documento final por WhatsApp.
+El PDF se entrega de forma **síncrona** apenas la API de facturación acepta la emisión (ver
+[`mensajes-camino-feliz.md`](./mensajes-camino-feliz.md), paso 5/6): ya no hay notificación
+asíncrona posterior. La descarga del PDF + su subida a WhatsApp puede fallar, pero la
+factura/NC ya quedó emitida (irreversible), así que la sesión igual llega a `COMPLETADA` y
+solo se avisa por texto. **No hay reintento automático** (se eliminó el barrido asíncrono).
 
 | Mensaje | Disparador | Código |
 |---|---|---|
-| `construirMensajeRechazado(documento)` — dinámico: "⚠️ Tu `<factura/nota de crédito>` Nº `<numero>` fue rechazada por SIFEN. Motivo: `<sifenEstadoMensaje>`. Cliente: `<nombre>` (`<documento>`)." | `documento.estadoSifen === 'RECHAZADO'` | `documentoNotificacion.service.js:24`, texto en `documentoPresentacion.js:16` |
-| `construirMensajeError(documento)` — dinámico: "❌ Hubo un problema al procesar tu `<factura/nota de crédito>` Nº `<numero>`. Por favor comunicate con soporte: wa.me/595976788698. Cliente: `<nombre>` (`<documento>`)." | `documento.estadoSifen === 'ERROR'` | `documentoNotificacion.service.js:25`, texto en `documentoPresentacion.js:27` |
-| *(sin mensaje de texto, se envía el PDF)* | `documento.estadoSifen === 'APROBADO'` — camino feliz, no es error | `documentoNotificacion.service.js:7-20` |
+| `FACTURA_EMITIDA_SIN_PDF`: "✅ ¡Tu factura fue emitida correctamente! Sin embargo, no pude adjuntarte el PDF por este chat en este momento. Contactá a soporte (wa.me/595976788698) para que te lo hagan llegar." | `documentoNotificacionService.enviarPdf` lanza (descarga fallida, `pdfNombre` null, o WhatsApp caído) al emitir una factura | `entregarPdfAlCliente` (`botOrchestrator.service.js`) |
+| `NC_EMITIDA_SIN_PDF`: mismo texto para nota de crédito | Ídem, al emitir una nota de crédito | `entregarPdfAlCliente` (`botOrchestrator.service.js`) |
 
-**Riesgo silencioso:** si `documento.pdfNombre` es `null` con `estadoSifen === 'APROBADO'`,
-`enviarAprobado` lanza un `Error` genérico (línea 9) que **no tiene ningún mapeo a mensaje de
-usuario** — no queda claro quién captura esa excepción río arriba (el cron/scheduler) ni si el
-cliente se entera de que su documento fue aprobado pero no le llegó el PDF.
+**Nota:** el estado final que SIFEN le asigne al documento (APROBADO/RECHAZADO/ERROR) se sigue
+registrando en la tabla `documento` vía `POST /documento/bulk-update` (para auditoría), pero
+**ya no dispara ningún aviso al cliente**.
 
 ---
 

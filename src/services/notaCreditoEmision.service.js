@@ -26,8 +26,8 @@ const conReintentoAuth = async (empresa, llamarConToken) => {
 const consultarTotalFactura = (empresa, cdc) => conReintentoAuth(empresa, (token) => facturaApiService.consultarTotalFactura(token, cdc));
 
 /**
- * No descarga ni envía el PDF: igual que la factura, queda FIRMADA pero pendiente de
- * aprobación en SIFEN (ver comentario en facturaEmision.service.js).
+ * No descarga ni envía el PDF acá: solo emite. Igual que la factura, queda FIRMADA pero
+ * el orquestador entrega el PDF en el acto (ver comentario en facturaEmision.service.js).
  * @param {{ empresa: object, cdc: string, items: Array<{descripcion: string, cantidad: number, precioUnitario: number, tasa: '0%'|'5%'|'10%'}> }} params
  * @returns {Promise<{ documentoId: string, numero: string, numeroFormateado: string, cdc: string, pdfNombre: string, clienteNombre: string, clienteDocumento: string, estadoSifen: string, sifenEstadoMensaje: string, linkQr: string }>}
  */
