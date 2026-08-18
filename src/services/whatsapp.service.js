@@ -8,10 +8,30 @@ const GRAPH_BASE_URL = 'https://graph.facebook.com';
 // Límites de la API de WhatsApp Cloud para interactive list messages.
 const LIST_MESSAGE_LIMITS = { TITLE_MAX: 24, DESCRIPTION_MAX: 72, MAX_ROWS: 10 };
 
+// Todas las llamadas a la Graph API pasan por acá para tener un timeout (AbortController):
+// sin esto, un fetch colgado (ej. subir el PDF con la red degradada) deja la emisión sin
+// resolverse indefinidamente y sin avisarle al usuario. Ante un cuelgue se aborta y se
+// lanza un Error claro, que los callers ya tratan como falla de envío.
+const fetchConTimeout = async (url, options = {}) => {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), env.WHATSAPP_API_TIMEOUT_MS);
+
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } catch (err) {
+    if (err.name === 'AbortError') {
+      throw new Error(`WhatsApp API timeout tras ${env.WHATSAPP_API_TIMEOUT_MS}ms (${url})`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+};
+
 const sendTextMessage = async (to, body) => {
   const url = `${GRAPH_BASE_URL}/${env.WHATSAPP_API_VERSION}/${env.WHATSAPP_PHONE_NUMBER_ID}/messages`;
 
-  const res = await fetch(url, {
+  const res = await fetchConTimeout(url, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${env.WHATSAPP_ACCESS_TOKEN}`,
@@ -39,7 +59,7 @@ const sendDocumentMessage = async (to, { link, id, filename, caption }) => {
 
   const document = id ? { id, filename, caption } : { link, filename, caption };
 
-  const res = await fetch(url, {
+  const res = await fetchConTimeout(url, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${env.WHATSAPP_ACCESS_TOKEN}`,
@@ -88,7 +108,7 @@ const sendListMessage = async (to, { headerText, bodyText, footerText, buttonTex
 
   const url = `${GRAPH_BASE_URL}/${env.WHATSAPP_API_VERSION}/${env.WHATSAPP_PHONE_NUMBER_ID}/messages`;
 
-  const res = await fetch(url, {
+  const res = await fetchConTimeout(url, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${env.WHATSAPP_ACCESS_TOKEN}`,
@@ -150,7 +170,7 @@ const uploadMedia = async (buffer, filename, mimeType) => {
   form.append('messaging_product', 'whatsapp');
   form.append('file', new Blob([buffer], { type: mimeType }), filename);
 
-  const res = await fetch(url, {
+  const res = await fetchConTimeout(url, {
     method: 'POST',
     headers: { Authorization: `Bearer ${env.WHATSAPP_ACCESS_TOKEN}` },
     body: form,
@@ -170,7 +190,7 @@ const uploadMedia = async (buffer, filename, mimeType) => {
 const getMediaUrl = async (mediaId) => {
   const url = `${GRAPH_BASE_URL}/${env.WHATSAPP_API_VERSION}/${mediaId}`;
 
-  const res = await fetch(url, {
+  const res = await fetchConTimeout(url, {
     headers: { Authorization: `Bearer ${env.WHATSAPP_ACCESS_TOKEN}` },
   });
 
@@ -190,7 +210,7 @@ const getMediaUrl = async (mediaId) => {
 const downloadMedia = async (mediaId) => {
   const { url, mime_type: mimeType } = await getMediaUrl(mediaId);
 
-  const res = await fetch(url, {
+  const res = await fetchConTimeout(url, {
     headers: { Authorization: `Bearer ${env.WHATSAPP_ACCESS_TOKEN}` },
   });
 
@@ -210,7 +230,7 @@ const downloadMedia = async (mediaId) => {
 const updateWebhookUrl = async (webhookUrl) => {
   const url = `${GRAPH_BASE_URL}/${env.WHATSAPP_API_VERSION}/${env.WHATSAPP_BUSINESS_ACCOUNT_ID}/subscribed_apps`;
 
-  const res = await fetch(url, {
+  const res = await fetchConTimeout(url, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${env.WHATSAPP_ACCESS_TOKEN}`,

@@ -1,3 +1,4 @@
+const env = require('../utils/env');
 const logger = require('../utils/logger');
 const { normalizarTelefono, esSaludoPuro } = require('../utils/texto');
 const { construirMensajeCamposFaltantes, construirResumenConfirmacion } = require('../utils/facturaPresentacion');
@@ -42,8 +43,10 @@ const documentoService = require('./documento.service');
 const documentoNotificacionService = require('./documentoNotificacion.service');
 const transcripcionService = require('./transcripcion.service');
 const chatExportService = require('./chatExport.service');
+const telegramService = require('./telegram.service');
 const { OpenAIServiceError } = require('./openai.errors');
-const { FacturaApiError } = require('./facturaApi.errors');
+const { FacturaApiError, esErrorTransitorio } = require('./facturaApi.errors');
+const { randomUUID } = require('crypto');
 
 // Estados desde los que se puede pasar a CAPTURANDO_DATOS/ESPERANDO_CONFIRMACION/
 // PROCESANDO/CANCELADA: cualquier estado no terminal y no ya-en-procesamiento.
@@ -172,8 +175,21 @@ const entregarPdfAlCliente = async ({ conversacion, contacto, documento, mensaje
   try {
     await documentoNotificacionService.enviarPdf(documento);
   } catch (error) {
+    // El envío falló (descarga/WhatsApp): NO se marca notificado, así el barrido de
+    // notificaciones lo reintenta solo (ver documentoNotificacionBarrido.service.js). Se le
+    // avisa al usuario que la factura quedó emitida y que le haremos llegar el PDF.
     logger.error('Error entregando el PDF al cliente tras emitir', { ...safeError(error), cdc: documento.cdc, tipo: documento.tipo });
     await responderYRegistrar(conversacion, contacto, mensajeFallback);
+    return;
+  }
+
+  // Entrega OK: se marca notificado para que el barrido no lo reenvíe. Best-effort y fuera del
+  // try del envío (un fallo acá no debe disparar el mensaje de fallback: el PDF ya llegó); el
+  // peor caso si esto falla es que el barrido reenvíe el PDF una vez más.
+  try {
+    await documentoService.marcarNotificado(documento.cdc);
+  } catch (error) {
+    logger.error('No se pudo marcar el documento como notificado', { ...safeError(error), cdc: documento.cdc });
   }
 };
 
@@ -205,8 +221,73 @@ const cancelar = async ({ contacto, conversacion, sesion }) => {
   await responderYRegistrar(conversacion, contacto, MENSAJES.CANCELACION);
 };
 
+// Cierre común del camino feliz de emisión (factura o NC), desde el flujo interactivo y desde
+// el reintento de fondo: registra el documento, pasa la sesión a COMPLETADA y le entrega el PDF
+// al cliente. La sesión debe venir en PROCESANDO (todos los callers la dejan así antes de emitir).
+const finalizarEmisionExitosa = async ({ contacto, conversacion, sesion, borrador, resultado, tipo, mensajeFallback }) => {
+  const documento = {
+    empresaId: contacto.empresa.id,
+    numeroTelefono: contacto.numeroTelefono,
+    tipo,
+    cdc: resultado.cdc,
+    pdfNombre: resultado.pdfNombre,
+    numeroDocumentoFormateado: resultado.numeroFormateado,
+    clienteNombre: resultado.clienteNombre,
+    clienteDocumento: resultado.clienteDocumento,
+    estadoSifen: resultado.estadoSifen,
+    sifenEstadoMensaje: resultado.sifenEstadoMensaje,
+  };
+
+  await registrarDocumentoEmitido(documento);
+
+  const datosCompletados = {
+    ...borrador,
+    resultadoEmision: {
+      documentoId: resultado.documentoId ?? null,
+      numero: resultado.numero ?? null,
+      cdc: resultado.cdc ?? null,
+    },
+  };
+
+  await sesionConversacionalService.transicionar(sesion.id, [ESTADOS_SESION.PROCESANDO], ESTADOS_SESION.COMPLETADA, datosCompletados);
+  notificarFinDeChat(conversacion, contacto, sesion, ESTADOS_SESION.COMPLETADA);
+  // El PDF (con su caption) es el mensaje de éxito: no se envía además ningún texto.
+  await entregarPdfAlCliente({ conversacion, contacto, documento, mensajeFallback });
+};
+
+// Alerta a Telegram cuando una emisión no se pudo completar ni siquiera tras los reintentos
+// automáticos (o por un rechazo de datos aparecido en el reintento): es el disparador para
+// entrar a revisar por qué falla / si la factura llegó a emitirse. Best-effort: no debe tirar.
+const alertarEmisionFallida = async ({ contacto, borrador, intentos, error, motivo, tipoLabel = 'FACTURA' }) => {
+  const cliente = borrador?.cliente || {};
+  const items = (borrador?.items || []).map((i) => `• ${i.cantidad} x ${i.descripcion} (${i.tasa})`).join('\n');
+  const texto = [
+    `🚨 EMISIÓN DE ${tipoLabel} NO COMPLETADA`,
+    `Motivo: ${motivo}`,
+    `Empresa: ${contacto?.empresa?.razonSocial || contacto?.empresa?.id || '-'}`,
+    `Contacto: ${contacto?.nombre || '-'} (${contacto?.numeroTelefono || '-'})`,
+    `Cliente: ${cliente.nombre || '-'} (${cliente.numeroDocumento || '-'})`,
+    `CDC (NC): ${borrador?.cdc || '-'}`,
+    `Ítems:\n${items || '-'}`,
+    `idExterno: ${borrador?.idempotencyKey || '-'}`,
+    `Intentos: ${intentos}`,
+    `Último error: ${error?.type || error?.name || 'desconocido'} — ${error?.message || ''}`,
+    '',
+    'Revisá en el backend/SIFEN si el comprobante llegó a emitirse (buscá por idExterno) antes de reemitir.',
+  ].join('\n');
+
+  try {
+    await telegramService.enviarMensaje(texto);
+  } catch (errAlerta) {
+    logger.error('No se pudo enviar la alerta de emisión fallida a Telegram', safeError(errAlerta));
+  }
+};
+
 const confirmarYEmitir = async ({ contacto, conversacion, sesion, borrador }) => {
-  const idempotencyKey = `factyble:whatsapp:${conversacion.id}:${sesion.id}:${borrador.version}`;
+  // idExterno único por confirmación (UUID) y estable entre reintentos porque se guarda en la
+  // sesión: NO se usa solo la version, que se repite entre emisiones distintas de la misma
+  // conversación (mismo sesion.id) y haría que la reconciliación devuelva un documento viejo.
+  const idempotencyKey = `factyble:whatsapp:fac:${conversacion.id}:${sesion.id}:${randomUUID()}`;
   const datosConKey = { ...borrador, idempotencyKey };
 
   const enProcesamiento = await sesionConversacionalService.transicionar(sesion.id, ESTADOS_ACTIVOS, ESTADOS_SESION.PROCESANDO, datosConKey);
@@ -231,50 +312,92 @@ const confirmarYEmitir = async ({ contacto, conversacion, sesion, borrador }) =>
     });
   } catch (error) {
     if (error instanceof FacturaApiError && error.type === 'VALIDATION') {
-      // Dato rechazado por la API de facturación (ej. RUC inexistente para SIFEN): es
-      // corregible por el usuario, así que no se descarta el borrador ni se termina la
-      // sesión — se vuelve a ESPERANDO_CONFIRMACION para que pueda corregir y reintentar.
+      // Dato rechazado por la API de facturación (ej. RUC inexistente para SIFEN): NO es una
+      // caída del servicio sino un dato a corregir, así que no se reintenta — se vuelve a
+      // ESPERANDO_CONFIRMACION para que el usuario lo corrija y confirme de nuevo.
       logger.error('La API de facturación rechazó los datos', safeError(error));
       await sesionConversacionalService.transicionar(sesion.id, [ESTADOS_SESION.PROCESANDO], ESTADOS_SESION.ESPERANDO_CONFIRMACION, borrador);
       await responderYRegistrar(conversacion, contacto, construirMensajeDatosRechazados(error.message));
       return;
     }
 
-    logger.error('Error al emitir factura', safeError(error));
-    await sesionConversacionalService.transicionar(sesion.id, [ESTADOS_SESION.PROCESANDO], ESTADOS_SESION.ERROR, datosConKey);
-    notificarFinDeChat(conversacion, contacto, sesion, ESTADOS_SESION.ERROR);
-    await responderYRegistrar(conversacion, contacto, MENSAJES.ERROR_EMISION);
+    // El servicio falló (503/timeout/red/5xx, etc.): la factura NO se emitió. En vez de cerrar
+    // en ERROR, se agenda un reintento automático de fondo (ver emisionReintento.service.js) y
+    // al usuario se le muestra el mismo mensaje del camino feliz — sin ningún indicio de problema.
+    logger.warn('Emisión falló, se agenda reintento automático', safeError(error));
+    const datosReintento = { ...datosConKey, reintentoEmision: { intentos: 0 } };
+    await sesionConversacionalService.transicionar(sesion.id, [ESTADOS_SESION.PROCESANDO], ESTADOS_SESION.REINTENTANDO_EMISION, datosReintento);
+    await responderYRegistrar(conversacion, contacto, MENSAJES.FACTURA_EMITIDA_SIN_PDF);
     return;
   }
 
-  const documento = {
-    empresaId: contacto.empresa.id,
-    numeroTelefono: contacto.numeroTelefono,
-    tipo: 'FACTURA',
-    cdc: resultado.cdc,
-    pdfNombre: resultado.pdfNombre,
-    numeroDocumentoFormateado: resultado.numeroFormateado,
-    clienteNombre: resultado.clienteNombre,
-    clienteDocumento: resultado.clienteDocumento,
-    estadoSifen: resultado.estadoSifen,
-    sifenEstadoMensaje: resultado.sifenEstadoMensaje,
-  };
+  await finalizarEmisionExitosa({ contacto, conversacion, sesion: enProcesamiento, borrador: datosConKey, resultado, tipo: 'FACTURA', mensajeFallback: MENSAJES.FACTURA_EMITIDA_SIN_PDF });
+};
 
-  await registrarDocumentoEmitido(documento);
+// Un ciclo del reintento de fondo de una emisión agendada (estado REINTENTANDO_EMISION),
+// sirve para factura Y nota de crédito (según operacionActiva). Lo llama
+// emisionReintento.service.js con la sesión ya cargada (incluye conversacion+contacto+empresa).
+// La emisión reconcilia por idExterno, así que no duplica. Solo se reintenta ante una falla
+// transitoria; cualquier otro error (o al agotar EMISION_REINTENTO_MAX) cierra en ERROR y
+// alerta a Telegram. A Fernando no se le vuelve a escribir (ya recibió el mensaje tranquilizador).
+const reintentarEmisionPendiente = async (sesion) => {
+  const conversacion = sesion.conversacion;
+  const contacto = conversacion?.contacto;
+  const borrador = sesion.datosTemporales || {};
+  const idempotencyKey = borrador.idempotencyKey;
+  const intentos = (borrador.reintentoEmision?.intentos || 0) + 1;
+  const esNC = sesion.operacionActiva === OPERACIONES.NOTA_CREDITO;
+  const tipoLabel = esNC ? 'NOTA DE CRÉDITO' : 'FACTURA';
 
-  const datosCompletados = {
-    ...datosConKey,
-    resultadoEmision: {
-      documentoId: resultado.documentoId ?? null,
-      numero: resultado.numero ?? null,
-      cdc: resultado.cdc ?? null,
-    },
-  };
+  if (!contacto?.empresa || !idempotencyKey) {
+    logger.error('Sesión pendiente de reintento sin datos suficientes', { sesionId: sesion.id });
+    return;
+  }
 
-  await sesionConversacionalService.transicionar(sesion.id, [ESTADOS_SESION.PROCESANDO], ESTADOS_SESION.COMPLETADA, datosCompletados);
-  notificarFinDeChat(conversacion, contacto, sesion, ESTADOS_SESION.COMPLETADA);
-  // El PDF (con su caption) es el mensaje de éxito: no se envía además ningún texto.
-  await entregarPdfAlCliente({ conversacion, contacto, documento, mensajeFallback: MENSAJES.FACTURA_EMITIDA_SIN_PDF });
+  // Lock: pasar a PROCESANDO para que un mensaje del usuario no interfiera. Si otro proceso ya
+  // cambió el estado (ej. el usuario canceló), transicionar devuelve null y no se hace nada.
+  const enProceso = await sesionConversacionalService.transicionar(sesion.id, [ESTADOS_SESION.REINTENTANDO_EMISION], ESTADOS_SESION.PROCESANDO, borrador);
+  if (!enProceso) return;
+
+  let resultado;
+  try {
+    // reconciliarPrimero: en el reintento se consulta por idExterno ANTES de postear, para no
+    // duplicar si un intento previo llegó a crear el comprobante (ver emitir*.service.js).
+    resultado = esNC
+      ? await notaCreditoEmisionService.emitirNotaCredito({ empresa: contacto.empresa, cdc: borrador.cdc, items: borrador.items, idempotencyKey, reconciliarPrimero: true })
+      : await facturaEmisionService.emitirFactura({ empresa: contacto.empresa, cliente: borrador.cliente, condicionVenta: borrador.condicionVenta, items: borrador.items, totales: borrador.totales, idempotencyKey, reconciliarPrimero: true });
+  } catch (error) {
+    const transitorio = esErrorTransitorio(error);
+    const agotado = intentos >= env.EMISION_REINTENTO_MAX;
+
+    // Solo se reintenta una falla transitoria con intentos disponibles. Un error no transitorio
+    // (rechazo de datos, config) no se resuelve reintentando; y si se agotaron los intentos, se
+    // deja de insistir. En ambos casos: ERROR + alerta a Telegram para revisión manual.
+    if (!transitorio || agotado) {
+      const motivo = !transitorio ? `Error no reintentable (${error?.type || error?.name})` : `Se agotaron ${intentos} reintentos`;
+      logger.error('Reintento de emisión sin éxito: se cierra y alerta', { sesionId: sesion.id, intentos, motivo, ...safeError(error) });
+      await sesionConversacionalService.transicionar(enProceso.id, [ESTADOS_SESION.PROCESANDO], ESTADOS_SESION.ERROR, { ...borrador, reintentoEmision: { intentos } });
+      notificarFinDeChat(conversacion, contacto, sesion, ESTADOS_SESION.ERROR);
+      await alertarEmisionFallida({ contacto, borrador, intentos, error, motivo, tipoLabel });
+      return;
+    }
+
+    // Falla transitoria y quedan reintentos: reagendar (calcularFechaExpiracion pone el próximo
+    // intento a +EMISION_REINTENTO_INTERVALO_MS) con el contador incrementado.
+    logger.warn('Reintento de emisión falló, se reagenda', { sesionId: sesion.id, intentos, ...safeError(error) });
+    await sesionConversacionalService.transicionar(enProceso.id, [ESTADOS_SESION.PROCESANDO], ESTADOS_SESION.REINTENTANDO_EMISION, { ...borrador, reintentoEmision: { intentos } });
+    return;
+  }
+
+  await finalizarEmisionExitosa({
+    contacto,
+    conversacion,
+    sesion: enProceso,
+    borrador,
+    resultado,
+    tipo: esNC ? 'NOTA_CREDITO' : 'FACTURA',
+    mensajeFallback: esNC ? MENSAJES.NC_EMITIDA_SIN_PDF : MENSAJES.FACTURA_EMITIDA_SIN_PDF,
+  });
 };
 
 // ---- Flujo de cancelación de documentos (factura o nota de crédito ya emitidas) ----
@@ -713,7 +836,12 @@ const mapNotaCreditoEmisionError = (error) => {
 };
 
 const confirmarYEmitirNotaCredito = async ({ contacto, conversacion, sesion, borrador }) => {
-  const enProcesamiento = await sesionConversacionalService.transicionar(sesion.id, ESTADOS_ACTIVOS, ESTADOS_SESION.PROCESANDO, borrador);
+  // idExterno único por confirmación (UUID) y estable entre reintentos porque se guarda en la
+  // sesión — mismo criterio que confirmarYEmitir (ver comentario allí).
+  const idempotencyKey = `factyble:whatsapp:nc:${conversacion.id}:${sesion.id}:${randomUUID()}`;
+  const datosConKey = { ...borrador, idempotencyKey };
+
+  const enProcesamiento = await sesionConversacionalService.transicionar(sesion.id, ESTADOS_ACTIVOS, ESTADOS_SESION.PROCESANDO, datosConKey);
 
   if (!enProcesamiento) {
     // Ya fue confirmada por un mensaje concurrente: no se dispara una segunda emisión.
@@ -725,8 +853,20 @@ const confirmarYEmitirNotaCredito = async ({ contacto, conversacion, sesion, bor
 
   let resultado;
   try {
-    resultado = await notaCreditoEmisionService.emitirNotaCredito({ empresa: contacto.empresa, cdc: borrador.cdc, items: borrador.items });
+    resultado = await notaCreditoEmisionService.emitirNotaCredito({ empresa: contacto.empresa, cdc: datosConKey.cdc, items: datosConKey.items, idempotencyKey });
   } catch (error) {
+    // El servicio falló (503/timeout/red/5xx): la NC no se emitió. Se agenda reintento de fondo
+    // (mismo mecanismo que factura) y al usuario se le muestra el mensaje del camino feliz, sin
+    // indicio de problema. El resto de los errores SÍ son de negocio (CDC inexistente, saldo
+    // insuficiente, factura no aprobada, etc.): se manejan pidiéndole al usuario que corrija.
+    if (esErrorTransitorio(error)) {
+      logger.warn('Emisión de NC falló, se agenda reintento automático', safeError(error));
+      const datosReintento = { ...datosConKey, reintentoEmision: { intentos: 0 } };
+      await sesionConversacionalService.transicionar(sesion.id, [ESTADOS_SESION.PROCESANDO], ESTADOS_SESION.REINTENTANDO_EMISION, datosReintento);
+      await responderYRegistrar(conversacion, contacto, MENSAJES.NC_EMITIDA_SIN_PDF);
+      return;
+    }
+
     logger.error('Error al emitir nota de crédito', safeError(error));
     const { mensaje, resetCdc, volverAConfirmacion } = mapNotaCreditoEmisionError(error);
 
@@ -744,26 +884,7 @@ const confirmarYEmitirNotaCredito = async ({ contacto, conversacion, sesion, bor
     return;
   }
 
-  const documento = {
-    empresaId: contacto.empresa.id,
-    numeroTelefono: contacto.numeroTelefono,
-    tipo: 'NOTA_CREDITO',
-    cdc: resultado.cdc,
-    pdfNombre: resultado.pdfNombre,
-    numeroDocumentoFormateado: resultado.numeroFormateado,
-    clienteNombre: resultado.clienteNombre,
-    clienteDocumento: resultado.clienteDocumento,
-    estadoSifen: resultado.estadoSifen,
-    sifenEstadoMensaje: resultado.sifenEstadoMensaje,
-  };
-
-  await registrarDocumentoEmitido(documento);
-
-  const datosCompletados = { ...borrador, resultadoEmision: resultado };
-  await sesionConversacionalService.transicionar(sesion.id, [ESTADOS_SESION.PROCESANDO], ESTADOS_SESION.COMPLETADA, datosCompletados);
-  notificarFinDeChat(conversacion, contacto, sesion, ESTADOS_SESION.COMPLETADA);
-  // El PDF (con su caption) es el mensaje de éxito: no se envía además ningún texto.
-  await entregarPdfAlCliente({ conversacion, contacto, documento, mensajeFallback: MENSAJES.NC_EMITIDA_SIN_PDF });
+  await finalizarEmisionExitosa({ contacto, conversacion, sesion: enProcesamiento, borrador: datosConKey, resultado, tipo: 'NOTA_CREDITO', mensajeFallback: MENSAJES.NC_EMITIDA_SIN_PDF });
 };
 
 // Único punto de entrada para cualquier mensaje de texto mientras operacionActiva ===
@@ -911,7 +1032,10 @@ const manejarSesion = async ({ contacto, conversacion, sesion, texto }) => {
   // procesarNotaCredito con un estado que ESTADOS_ACTIVOS no cubre, y cualquier
   // `transicionar` devolvería null — el mensaje se perdería en silencio en vez de avisar
   // "ya se está procesando".
-  if (sesionActual.estado === ESTADOS_SESION.PROCESANDO) {
+  // REINTENTANDO_EMISION se trata igual que PROCESANDO frente a un nuevo mensaje: la emisión
+  // está en curso (reintentándose de fondo), así que no se arranca nada nuevo ni se le muestra
+  // ningún indicio de problema; solo se le recuerda que su factura está en camino.
+  if (sesionActual.estado === ESTADOS_SESION.PROCESANDO || sesionActual.estado === ESTADOS_SESION.REINTENTANDO_EMISION) {
     let mensaje = MENSAJES.YA_PROCESANDO;
     if (sesionActual.operacionActiva === OPERACIONES.NOTA_CREDITO) mensaje = MENSAJES.NC_YA_PROCESANDO;
     else if (sesionActual.operacionActiva === OPERACIONES.CANCELAR_DOCUMENTO) mensaje = MENSAJES.CANC_YA_PROCESANDO;
@@ -1122,4 +1246,4 @@ const procesarActualizacionEstado = async (status) => {
   await mensajeService.actualizarEstadoPorWhatsappId(status.id, nuevoEstado);
 };
 
-module.exports = { procesarMensajeEntrante, procesarActualizacionEstado };
+module.exports = { procesarMensajeEntrante, procesarActualizacionEstado, reintentarEmisionPendiente };

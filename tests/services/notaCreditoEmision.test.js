@@ -61,7 +61,7 @@ test('consultarTotalFactura: NOT_FOUND se propaga sin reautenticar', async (t) =
   assert.equal(autenticarSpy.mock.callCount(), 0);
 });
 
-test('emitirNotaCredito: envía exactamente {cdc, items}, sin idempotencyKey ni otros campos', async (t) => {
+test('emitirNotaCredito: envía {cdc, idExterno, items} con idExterno = idempotencyKey', async (t) => {
   const empresa = { id: 4, usuario: 'admin@empresa.com', password: 'x', token: 'token-vigente', tokenExpiracion: new Date(Date.now() + 3600 * 1000) };
   const emitirSpy = t.mock.method(facturaApiService, 'emitirNotaCreditoSimple', async () => ({
     id: 10,
@@ -76,11 +76,12 @@ test('emitirNotaCredito: envía exactamente {cdc, items}, sin idempotencyKey ni 
     linkqr: 'https://ejemplo.com/qr',
   }));
 
-  const resultado = await notaCreditoEmisionService.emitirNotaCredito({ empresa, cdc: CDC, items: ITEMS });
+  const resultado = await notaCreditoEmisionService.emitirNotaCredito({ empresa, cdc: CDC, items: ITEMS, idempotencyKey: 'factyble:whatsapp:nc:10:5:abc' });
 
   const payloadEnviado = emitirSpy.mock.calls[0].arguments[1];
-  assert.deepEqual(Object.keys(payloadEnviado).sort(), ['cdc', 'items']);
+  assert.deepEqual(Object.keys(payloadEnviado).sort(), ['cdc', 'idExterno', 'items']);
   assert.equal(payloadEnviado.cdc, CDC);
+  assert.equal(payloadEnviado.idExterno, 'factyble:whatsapp:nc:10:5:abc');
   assert.deepEqual(payloadEnviado.items, [{ cantidad: 2, precioUnitario: 50000, descripcion: 'Silla', tasa: '10%' }]);
 
   assert.equal(resultado.numero, '001-001-0000045');
@@ -91,6 +92,44 @@ test('emitirNotaCredito: envía exactamente {cdc, items}, sin idempotencyKey ni 
   assert.equal(resultado.clienteDocumento, '4123456-7');
   assert.equal(resultado.estadoSifen, 'FIRMADO');
   assert.equal(resultado.linkQr, 'https://ejemplo.com/qr');
+});
+
+test('emitirNotaCredito: error transitorio + reconciliación ENCONTRADA devuelve la NC existente sin reemitir', async (t) => {
+  const empresa = { id: 8, usuario: 'admin@empresa.com', password: 'x', token: 'token-vigente', tokenExpiracion: new Date(Date.now() + 3600 * 1000) };
+  const emitirSpy = t.mock.method(facturaApiService, 'emitirNotaCreditoSimple', async () => {
+    throw new FacturaApiError('SERVER_ERROR', 'Service Unavailable', undefined, 503);
+  });
+  const buscarSpy = t.mock.method(facturaApiService, 'buscarNotaCreditoPorIdExterno', async () => ({
+    id: 10,
+    numero_nota_credito: '001-001-0000045',
+    nota_credito_uuid: 'nc-uuid',
+    cdc: CDC,
+    estado_sifen: 'FIRMADO',
+    sifen_estado_mensaje: null,
+    linkqr: null,
+  }));
+
+  const resultado = await notaCreditoEmisionService.emitirNotaCredito({ empresa, cdc: CDC, items: ITEMS, idempotencyKey: 'k-nc-1' });
+
+  assert.equal(emitirSpy.mock.callCount(), 1);
+  assert.equal(buscarSpy.mock.callCount(), 1);
+  assert.equal(resultado.documentoId, 10);
+  assert.equal(resultado.numeroFormateado, '001-001-0000045');
+  assert.equal(resultado.pdfNombre, 'nc-uuid.pdf');
+});
+
+test('emitirNotaCredito: error transitorio + reconciliación NO_EXISTE propaga el error', async (t) => {
+  const empresa = { id: 9, usuario: 'admin@empresa.com', password: 'x', token: 'token-vigente', tokenExpiracion: new Date(Date.now() + 3600 * 1000) };
+  t.mock.method(facturaApiService, 'emitirNotaCreditoSimple', async () => {
+    throw new FacturaApiError('SERVER_ERROR', 'Service Unavailable', undefined, 503);
+  });
+  const buscarSpy = t.mock.method(facturaApiService, 'buscarNotaCreditoPorIdExterno', async () => null);
+
+  await assert.rejects(
+    () => notaCreditoEmisionService.emitirNotaCredito({ empresa, cdc: CDC, items: ITEMS, idempotencyKey: 'k-nc-2' }),
+    (err) => err instanceof FacturaApiError && err.type === 'SERVER_ERROR',
+  );
+  assert.equal(buscarSpy.mock.callCount(), 1);
 });
 
 test('emitirNotaCredito: token rechazado (401/AUTH_FAILED) reautentica una vez y reintenta', async (t) => {

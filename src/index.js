@@ -3,6 +3,8 @@ const env = require('./utils/env');
 const logger = require('./utils/logger');
 const routes = require('./routes');
 const sesionBarridoService = require('./services/sesionBarrido.service');
+const documentoNotificacionBarridoService = require('./services/documentoNotificacionBarrido.service');
+const emisionReintentoService = require('./services/emisionReintento.service');
 
 const app = express();
 
@@ -41,3 +43,32 @@ setInterval(() => {
       barriendo = false;
     });
 }, env.SESION_BARRIDO_INTERVALO_MS);
+
+// Barrido que reintenta entregar el PDF de documentos emitidos cuyo envío al cliente no se
+// completó (ver documentoNotificacionBarrido.service.js). Mismo patrón `notificando` para
+// evitar corridas solapadas si una vuelta tarda más que el intervalo.
+let notificando = false;
+setInterval(() => {
+  if (notificando) return;
+  notificando = true;
+  documentoNotificacionBarridoService
+    .ejecutar()
+    .catch((error) => logger.error('Error inesperado en el barrido de notificaciones', { name: error?.name, message: error?.message }))
+    .finally(() => {
+      notificando = false;
+    });
+}, env.DOCUMENTO_NOTIF_BARRIDO_INTERVALO_MS);
+
+// Barrido que reintenta las emisiones que fallaron por una caída transitoria del servicio
+// (ver emisionReintento.service.js). Mismo patrón `reintentandoEmision` para no solapar vueltas.
+let reintentandoEmision = false;
+setInterval(() => {
+  if (reintentandoEmision) return;
+  reintentandoEmision = true;
+  emisionReintentoService
+    .ejecutar()
+    .catch((error) => logger.error('Error inesperado en el barrido de reintentos de emisión', { name: error?.name, message: error?.message }))
+    .finally(() => {
+      reintentandoEmision = false;
+    });
+}, env.EMISION_REINTENTO_BARRIDO_INTERVALO_MS);

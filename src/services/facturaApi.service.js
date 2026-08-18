@@ -73,7 +73,32 @@ const emitirFacturaSimple = async (token, payload) => {
     if (res.status === 401) throw new FacturaApiError('AUTH_FAILED', body?.message || 'Token inválido o expirado');
     if (res.status === 400) throw new FacturaApiError('VALIDATION', body?.message || 'Datos inválidos para emitir la factura');
     if (res.status === 404) throw new FacturaApiError('NOT_FOUND', body?.message || 'No se encontró establecimiento/caja/usuario');
-    throw new FacturaApiError('SERVER_ERROR', body?.message || 'Error interno de la API de facturación');
+    // Se conserva el status (ej. 503 "Service Unavailable", 502/504 de gateway) para que
+    // facturaEmision.service.js distinga un error transitorio (reintentable) de un 500 real.
+    throw new FacturaApiError('SERVER_ERROR', body?.message || 'Error interno de la API de facturación', undefined, res.status);
+  }
+
+  return body.data;
+};
+
+// GET /factura/id-externo/<idExterno>: recupera una factura por su id_externo (el mismo
+// idempotencyKey que se envía al emitir), acotada a la empresa del token. Sirve para
+// RECONCILIAR tras un error transitorio de /factura/simple: como el backend NO deduplica
+// por id_externo al crear, antes de reintendar una emisión hay que consultar acá si el
+// intento previo ya la creó, y así no emitir dos veces. Devuelve la factura o null (404).
+const buscarFacturaPorIdExterno = async (token, idExterno) => {
+  const res = await fetchConTimeout(construirUrl(`/factura/id-externo/${encodeURIComponent(idExterno)}`), {
+    method: 'GET',
+    headers: { Authorization: `Bearer ${token}` },
+  });
+
+  if (res.status === 404) return null;
+
+  const body = await parseJsonSeguro(res);
+
+  if (!res.ok) {
+    if (res.status === 401) throw new FacturaApiError('AUTH_FAILED', body?.message || 'Token inválido o expirado');
+    throw new FacturaApiError('SERVER_ERROR', body?.message || 'Error consultando factura por idExterno', undefined, res.status);
   }
 
   return body.data;
@@ -90,6 +115,26 @@ const descargarPdf = async (pdfNombre) => {
 
   const arrayBuffer = await res.arrayBuffer();
   return Buffer.from(arrayBuffer);
+};
+
+// GET /nota-credito/id-externo/<idExterno>: análogo a buscarFacturaPorIdExterno, para
+// reconciliar el reintento de una nota de crédito. Devuelve la NC o null (404).
+const buscarNotaCreditoPorIdExterno = async (token, idExterno) => {
+  const res = await fetchConTimeout(construirUrl(`/nota-credito/id-externo/${encodeURIComponent(idExterno)}`), {
+    method: 'GET',
+    headers: { Authorization: `Bearer ${token}` },
+  });
+
+  if (res.status === 404) return null;
+
+  const body = await parseJsonSeguro(res);
+
+  if (!res.ok) {
+    if (res.status === 401) throw new FacturaApiError('AUTH_FAILED', body?.message || 'Token inválido o expirado');
+    throw new FacturaApiError('SERVER_ERROR', body?.message || 'Error consultando nota de crédito por idExterno', undefined, res.status);
+  }
+
+  return body.data;
 };
 
 // GET /factura/cdc/:cdc/total: total bruto de la factura original (no descuenta NCs
@@ -194,6 +239,8 @@ const cancelarNotaCreditoSimple = async (token, payload) => {
 module.exports = {
   autenticar,
   emitirFacturaSimple,
+  buscarFacturaPorIdExterno,
+  buscarNotaCreditoPorIdExterno,
   descargarPdf,
   consultarTotalFactura,
   emitirNotaCreditoSimple,

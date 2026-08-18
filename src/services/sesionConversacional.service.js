@@ -11,6 +11,10 @@ const { borradorVacio } = require('./facturaBorrador.service');
 // expiran (fechaExpiracion queda en null: no hay nada pendiente del usuario).
 const calcularFechaExpiracion = (estado) => {
   if (ESTADOS_TERMINALES.includes(estado)) return null;
+  // Para REINTENTANDO_EMISION, fechaExpiracion NO es "cuándo se da por perdida" sino "cuándo
+  // toca el próximo reintento": el barrido de reintentos (emisionReintento.service.js) toma
+  // las que ya vencieron. Se agenda a EMISION_REINTENTO_INTERVALO_MS.
+  if (estado === ESTADOS_SESION.REINTENTANDO_EMISION) return new Date(Date.now() + env.EMISION_REINTENTO_INTERVALO_MS);
   const timeoutMs = estado === ESTADOS_SESION.PROCESANDO ? env.SESION_PROCESANDO_TIMEOUT_MS : env.SESION_INACTIVA_TIMEOUT_MS;
   return new Date(Date.now() + timeoutMs);
 };
@@ -105,4 +109,18 @@ const listarExpiradas = (estados) => {
   });
 };
 
-module.exports = { getOrCreateSesion, transicionar, resetSesion, setOperacionActiva, iniciarOperacion, listarExpiradas };
+// Sesiones cuya emisión quedó agendada para reintento y cuyo próximo intento (fechaExpiracion)
+// ya venció. Incluye conversacion+contacto+empresa: el barrido de reintentos necesita el
+// contacto para responder/exportar y la empresa (con sus credenciales) para reemitir.
+const listarEmisionesPendientesDeReintento = () => {
+  return prisma.sesionConversacional.findMany({
+    where: {
+      estado: ESTADOS_SESION.REINTENTANDO_EMISION,
+      fechaExpiracion: { lt: new Date() },
+    },
+    include: { conversacion: { include: { contacto: { include: { empresa: true } } } } },
+    orderBy: { id: 'asc' },
+  });
+};
+
+module.exports = { getOrCreateSesion, transicionar, resetSesion, setOperacionActiva, iniciarOperacion, listarExpiradas, listarEmisionesPendientesDeReintento };

@@ -14,6 +14,8 @@ const cancelacionParserService = require('../../src/services/cancelacionParser.s
 const cancelacionDocumentoService = require('../../src/services/cancelacionDocumento.service');
 const documentoService = require('../../src/services/documento.service');
 const documentoNotificacionService = require('../../src/services/documentoNotificacion.service');
+const chatExportService = require('../../src/services/chatExport.service');
+const telegramService = require('../../src/services/telegram.service');
 const { FacturaApiError } = require('../../src/services/facturaApi.errors');
 const { borradorVacio, construirBorrador } = require('../../src/services/facturaBorrador.service');
 const { borradorVacio: borradorVacioNC, construirBorrador: construirBorradorNC } = require('../../src/services/notaCreditoBorrador.service');
@@ -296,7 +298,7 @@ test('accion=CONFIRMAR sin datos suficientes no emite: pide completar antes de p
   assert.ok(textoEnviado(salientes)[0].includes('todavía no puedo emitir'));
 });
 
-test('caso 9: accion=CONFIRMAR en ESPERANDO_CONFIRMACION intenta la transición atómica y emite', async (t) => {
+test('caso 9: si el servicio falla al emitir, agenda reintento de fondo (REINTENTANDO_EMISION) y no muestra ningún error al usuario', async (t) => {
   const borrador = construirBorrador(
     { cliente: { nombre: 'Diego Larrea', tipoDocumento: 'RUC', numeroDocumento: '5249657-0' }, condicionVenta: 'CONTADO', items: [{ descripcion: 'Borrador', cantidad: 1, precioUnitario: 5000, tasa: '10%' }] },
     null,
@@ -312,9 +314,152 @@ test('caso 9: accion=CONFIRMAR en ESPERANDO_CONFIRMACION intenta la transición 
   await botOrchestrator.procesarMensajeEntrante(mensajeTexto('si'));
 
   assert.equal(emitirSpy.mock.callCount(), 1);
+  // No termina en ERROR: queda agendada para reintento automático de fondo.
+  assert.equal(sesion.estado, ESTADOS_SESION.REINTENTANDO_EMISION);
+  assert.equal(sesion.datosTemporales.reintentoEmision.intentos, 0);
+  const textos = textoEnviado(salientes);
+  assert.ok(textos.includes(MENSAJES.PROCESANDO_FACTURA));
+  // Al usuario se le muestra el mensaje del camino feliz, sin indicio de problema ni "error".
+  assert.ok(textos.includes(MENSAJES.FACTURA_EMITIDA_SIN_PDF));
+  assert.ok(!textos.includes(MENSAJES.ERROR_EMISION));
+});
+
+// ---- Reintento de fondo de emisión (estado REINTENTANDO_EMISION) ----
+
+const sesionParaReintento = (intentos, estado = ESTADOS_SESION.REINTENTANDO_EMISION) => ({
+  id: 500,
+  estado,
+  operacionActiva: OPERACIONES.EMITIR_FACTURA,
+  datosTemporales: {
+    cliente: { nombre: 'Natalia Britez', tipoDocumento: 'RUC', numeroDocumento: '5851866-5' },
+    condicionVenta: 'CONTADO',
+    items: [{ descripcion: 'Furuka', cantidad: 1, precioUnitario: 24000, tasa: '10%' }],
+    idempotencyKey: 'factyble:whatsapp:10:500:1',
+    reintentoEmision: { intentos },
+  },
+  conversacion: { id: 10, contacto: CONTACTO },
+});
+
+// Mock de transicionar sobre un objeto sesion local (simula la máquina de estados).
+const mockTransicionarLocal = (t, sesion) => {
+  t.mock.method(sesionConversacionalService, 'transicionar', async (id, estadosDesde, estadoHasta, datos) => {
+    if (id !== sesion.id || !estadosDesde.includes(sesion.estado)) return null;
+    sesion.estado = estadoHasta;
+    if (datos !== undefined) sesion.datosTemporales = datos;
+    return { ...sesion };
+  });
+};
+
+test('reintento de fondo exitoso: emite, pasa a COMPLETADA y entrega el PDF', async (t) => {
+  const sesion = sesionParaReintento(0);
+  mockTransicionarLocal(t, sesion);
+  t.mock.method(chatExportService, 'exportar', () => {});
+  const pdfs = [];
+  t.mock.method(documentoService, 'registrarEmision', async (d) => ({ id: 1, ...d }));
+  t.mock.method(documentoService, 'marcarNotificado', async () => ({}));
+  t.mock.method(documentoNotificacionService, 'enviarPdf', async (d) => pdfs.push(d));
+  const emitirSpy = t.mock.method(facturaEmisionService, 'emitirFactura', async () => ({
+    documentoId: 80,
+    numeroFormateado: '001-002-0000007',
+    cdc: '01050921665001002000000712026081718954695790',
+    pdfNombre: '707af-uuid.pdf',
+    clienteNombre: 'Natalia Britez',
+    clienteDocumento: '5851866-5',
+    estadoSifen: 'FIRMADO',
+  }));
+
+  await botOrchestrator.reintentarEmisionPendiente(sesion);
+
+  assert.equal(emitirSpy.mock.callCount(), 1);
+  assert.equal(sesion.estado, ESTADOS_SESION.COMPLETADA);
+  assert.equal(pdfs.length, 1);
+  assert.equal(pdfs[0].pdfNombre, '707af-uuid.pdf');
+});
+
+test('reintento de fondo que vuelve a fallar sin agotar: reagenda (vuelve a REINTENTANDO_EMISION) e incrementa el contador, sin alertar', async (t) => {
+  const sesion = sesionParaReintento(0);
+  mockTransicionarLocal(t, sesion);
+  t.mock.method(facturaEmisionService, 'emitirFactura', async () => {
+    throw new FacturaApiError('SERVER_ERROR', '503', undefined, 503);
+  });
+  const alertaSpy = t.mock.method(telegramService, 'enviarMensaje', async () => {});
+
+  await botOrchestrator.reintentarEmisionPendiente(sesion);
+
+  assert.equal(sesion.estado, ESTADOS_SESION.REINTENTANDO_EMISION);
+  assert.equal(sesion.datosTemporales.reintentoEmision.intentos, 1);
+  assert.equal(alertaSpy.mock.callCount(), 0);
+});
+
+test('reintento de fondo que agota EMISION_REINTENTO_MAX (3): cierra en ERROR y alerta a Telegram', async (t) => {
+  // intentos=2 previos -> este intento es el 3ro y último.
+  const sesion = sesionParaReintento(2);
+  mockTransicionarLocal(t, sesion);
+  t.mock.method(chatExportService, 'exportar', () => {});
+  t.mock.method(facturaEmisionService, 'emitirFactura', async () => {
+    throw new FacturaApiError('SERVER_ERROR', '503', undefined, 503);
+  });
+  const alertaSpy = t.mock.method(telegramService, 'enviarMensaje', async () => {});
+
+  await botOrchestrator.reintentarEmisionPendiente(sesion);
+
   assert.equal(sesion.estado, ESTADOS_SESION.ERROR);
-  assert.ok(textoEnviado(salientes).includes(MENSAJES.PROCESANDO_FACTURA));
-  assert.ok(textoEnviado(salientes).includes(MENSAJES.ERROR_EMISION));
+  assert.equal(alertaSpy.mock.callCount(), 1);
+  assert.ok(alertaSpy.mock.calls[0].arguments[0].includes('5851866-5'));
+});
+
+test('reintento de fondo: si la sesión ya no está en REINTENTANDO_EMISION (ej. el usuario canceló), no hace nada', async (t) => {
+  const sesion = sesionParaReintento(0, ESTADOS_SESION.CANCELADA);
+  mockTransicionarLocal(t, sesion);
+  const emitirSpy = t.mock.method(facturaEmisionService, 'emitirFactura', async () => {
+    throw new Error('no debería emitir');
+  });
+
+  await botOrchestrator.reintentarEmisionPendiente(sesion);
+
+  assert.equal(emitirSpy.mock.callCount(), 0);
+  assert.equal(sesion.estado, ESTADOS_SESION.CANCELADA);
+});
+
+test('reintento de fondo de NOTA DE CRÉDITO: usa emitirNotaCredito y entrega el PDF como NOTA_CREDITO', async (t) => {
+  const sesion = {
+    id: 501,
+    estado: ESTADOS_SESION.REINTENTANDO_EMISION,
+    operacionActiva: OPERACIONES.NOTA_CREDITO,
+    datosTemporales: {
+      cdc: '01050921665001002000000712026081718954695790',
+      items: [{ descripcion: 'Silla', cantidad: 1, precioUnitario: 50000, tasa: '10%' }],
+      idempotencyKey: 'factyble:whatsapp:nc:10:501:xyz',
+      reintentoEmision: { intentos: 0 },
+    },
+    conversacion: { id: 10, contacto: CONTACTO },
+  };
+  mockTransicionarLocal(t, sesion);
+  t.mock.method(chatExportService, 'exportar', () => {});
+  const pdfs = [];
+  t.mock.method(documentoService, 'registrarEmision', async (d) => ({ id: 1, ...d }));
+  t.mock.method(documentoService, 'marcarNotificado', async () => ({}));
+  t.mock.method(documentoNotificacionService, 'enviarPdf', async (d) => pdfs.push(d));
+  const emitirFacturaSpy = t.mock.method(facturaEmisionService, 'emitirFactura', async () => {
+    throw new Error('no debería emitir factura');
+  });
+  const emitirNCSpy = t.mock.method(notaCreditoEmisionService, 'emitirNotaCredito', async () => ({
+    documentoId: 30,
+    numeroFormateado: '001-002-0000009',
+    cdc: '01050921665001002000000712026081718954695790',
+    pdfNombre: 'nc-uuid.pdf',
+    estadoSifen: 'FIRMADO',
+  }));
+
+  await botOrchestrator.reintentarEmisionPendiente(sesion);
+
+  assert.equal(emitirFacturaSpy.mock.callCount(), 0);
+  assert.equal(emitirNCSpy.mock.callCount(), 1);
+  assert.equal(emitirNCSpy.mock.calls[0].arguments[0].idempotencyKey, 'factyble:whatsapp:nc:10:501:xyz');
+  assert.equal(sesion.estado, ESTADOS_SESION.COMPLETADA);
+  assert.equal(pdfs.length, 1);
+  assert.equal(pdfs[0].tipo, 'NOTA_CREDITO');
+  assert.equal(pdfs[0].pdfNombre, 'nc-uuid.pdf');
 });
 
 test('emisión exitosa: registra el Documento y le entrega el PDF al cliente en el acto (sin mensaje de pendiente)', async (t) => {
@@ -805,6 +950,27 @@ test('NC: si falla el registro local del Documento tras emitir, la sesión igual
   // El PDF igual se entrega (el registro local es best-effort, no bloquea la entrega).
   assert.equal(pdfsEnviados.length, 1);
   assert.ok(!textoEnviado(salientes).includes(MENSAJES.NC_EMITIDA_SIN_PDF));
+});
+
+test('NC: si el servicio falla al emitir (503), agenda reintento de fondo y no muestra error', async (t) => {
+  const borrador = borradorNCListoParaConfirmar();
+  const { sesion, salientes } = setupMundo(t, {
+    sesionEstado: ESTADOS_SESION.ESPERANDO_CONFIRMACION,
+    operacionActiva: OPERACIONES.NOTA_CREDITO,
+    datosTemporales: borrador,
+  });
+  t.mock.method(notaCreditoParserService, 'interpretar', async () => salidaParserNC('CONFIRMAR', borrador.items));
+  t.mock.method(notaCreditoEmisionService, 'emitirNotaCredito', async () => {
+    throw new FacturaApiError('SERVER_ERROR', 'Service Unavailable', undefined, 503);
+  });
+
+  await botOrchestrator.procesarMensajeEntrante(mensajeTexto('confirmo'));
+
+  assert.equal(sesion.estado, ESTADOS_SESION.REINTENTANDO_EMISION);
+  assert.equal(sesion.datosTemporales.reintentoEmision.intentos, 0);
+  const textos = textoEnviado(salientes);
+  assert.ok(textos.includes(MENSAJES.NC_EMITIDA_SIN_PDF));
+  assert.ok(!textos.includes(MENSAJES.NC_ERROR_EMISION));
 });
 
 test('NC: doble confirmación concurrente solo dispara una emisión', async (t) => {

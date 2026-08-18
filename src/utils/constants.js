@@ -3,6 +3,11 @@ const ESTADOS_SESION = Object.freeze({
   CAPTURANDO_DATOS: 'CAPTURANDO_DATOS',
   ESPERANDO_CONFIRMACION: 'ESPERANDO_CONFIRMACION',
   PROCESANDO: 'PROCESANDO',
+  // La emisión falló por una caída transitoria del servicio (no un rechazo de datos): la
+  // factura NO se emitió y queda agendada para reintento automático de fondo (ver
+  // emisionReintento.service.js). No es terminal ni activo: se comporta como PROCESANDO
+  // frente a nuevos mensajes del usuario. fechaExpiracion se usa como "próximo intento".
+  REINTENTANDO_EMISION: 'REINTENTANDO_EMISION',
   COMPLETADA: 'COMPLETADA',
   CANCELADA: 'CANCELADA',
   ERROR: 'ERROR',
@@ -84,11 +89,13 @@ Si el problema sigue, contactá a soporte y avisá que la factura quedó pendien
 Dame unos segundos ⚙️`,
 
   // Fallback: la factura ya se emitió, pero no se pudo adjuntar el PDF por este chat en el
-  // momento (falla al descargarlo o al subirlo a WhatsApp). No hay reintento automático.
+  // momento (falla al descargarlo o al subirlo a WhatsApp). El mensaje NO enmarca esto como
+  // un error: la factura está bien emitida, solo faltó el PDF, así que se tranquiliza al
+  // usuario y se le avisa que se lo haremos llegar (el envío queda a cargo del equipo).
   FACTURA_EMITIDA_SIN_PDF: `✅ *¡Tu factura fue emitida correctamente!*
 
-Sin embargo, no pude adjuntarte el PDF por este chat en este momento 😕
-Contactá a soporte (wa.me/595976788698) para que te lo hagan llegar 📄`,
+Ya quedó registrada a tu nombre y te vamos a hacer llegar el PDF por acá 📄
+Quedate tranquilo, de esto nos encargamos nosotros 🙌`,
 
   SOLO_TEXTO_SOPORTADO: `📝 *Por ahora solo puedo procesar mensajes de texto y audios.*
 
@@ -226,12 +233,13 @@ Cuando quieras arrancar de nuevo, escribime *"hola"* 👋`,
 
 Dame unos segundos ⚙️`,
 
-  // Fallback (igual que FACTURA_EMITIDA_SIN_PDF): la NC se emitió, pero no se pudo
-  // adjuntar el PDF por este chat en el momento. No hay reintento automático.
+  // Fallback (igual que FACTURA_EMITIDA_SIN_PDF): la NC se emitió, pero no se pudo adjuntar el
+  // PDF por este chat en el momento. Mismo criterio de copy: no se enmarca como error, se
+  // tranquiliza al usuario y se le avisa que se le hará llegar el PDF.
   NC_EMITIDA_SIN_PDF: `✅ *¡Tu nota de crédito fue emitida correctamente!*
 
-Sin embargo, no pude adjuntarte el PDF por este chat en este momento 😕
-Contactá a soporte (wa.me/595976788698) para que te lo hagan llegar 📄`,
+Ya quedó registrada y te vamos a hacer llegar el PDF por acá 📄
+Quedate tranquilo, de esto nos encargamos nosotros 🙌`,
 
   NC_YA_PROCESANDO: `⏳ *Tu nota de crédito ya está en camino.*
 
