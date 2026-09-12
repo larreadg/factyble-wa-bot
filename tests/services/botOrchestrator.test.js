@@ -651,7 +651,7 @@ test('caso 12: una corrección en ESPERANDO_CONFIRMACION actualiza el borrador y
 test('fix bug: una corrección que la IA no logra aplicar (borrador sin cambios) avisa en vez de reenviar la misma confirmación', async (t) => {
   const borradorPrevio = construirBorrador(
     {
-      cliente: { nombre: 'Universidad San Lorenzo', tipoDocumento: 'RUC', numeroDocumento: '1707133-8' },
+      cliente: { nombre: 'Universidad San Lorenzo', tipoDocumento: 'RUC', numeroDocumento: '1707133-0' },
       condicionVenta: 'CONTADO',
       items: [{ descripcion: 'Honorarios por servicio de enseñanza docente', cantidad: 1, precioUnitario: 1200200, tasa: '0%' }],
     },
@@ -682,7 +682,7 @@ test('fix bug: cliente distinto (RUC diferente) no arrastra los ítems del clien
   // nuevo cliente: el backend (construirBorrador) debe descartarlo igual.
   t.mock.method(facturaParserService, 'interpretar', async () =>
     salidaParser('CREAR_O_ACTUALIZAR_BORRADOR', {
-      cliente: { nombre: 'Universidad San Lorenzo', tipoDocumento: 'RUC', numeroDocumento: '1707133-8' },
+      cliente: { nombre: 'Universidad San Lorenzo', tipoDocumento: 'RUC', numeroDocumento: '1707133-0' },
       condicionVenta: 'CONTADO',
       items: [
         { descripcion: 'Kg de pan', cantidad: 1, precioUnitario: 10000, tasa: '10%' },
@@ -692,10 +692,10 @@ test('fix bug: cliente distinto (RUC diferente) no arrastra los ítems del clien
   );
 
   await botOrchestrator.procesarMensajeEntrante(
-    mensajeTexto('Quiero una factura para la Universidad San Lorenzo, su ruc es 1707133-8. Honorarios por servicio de enseñanza docente, 0% IVA.'),
+    mensajeTexto('Quiero una factura para la Universidad San Lorenzo, su ruc es 1707133-0. Honorarios por servicio de enseñanza docente, 0% IVA.'),
   );
 
-  assert.equal(sesion.datosTemporales.cliente.numeroDocumento, '1707133-8');
+  assert.equal(sesion.datosTemporales.cliente.numeroDocumento, '1707133-0');
   assert.equal(sesion.datosTemporales.condicionVenta, 'CONTADO');
   assert.equal(sesion.datosTemporales.items.length, 1);
   assert.equal(sesion.datosTemporales.items[0].descripcion, 'Honorarios por servicio de enseñanza docente');
@@ -755,7 +755,7 @@ test('caso 14: un webhook con whatsappMensajeId repetido no vuelve a llamar a Op
 });
 
 test('COMPLETADA se reinicia a INICIO ante un nuevo mensaje, descartando el borrador anterior', async (t) => {
-  const borradorPrevio = { ...borradorVacio(), version: 3, cliente: { nombre: 'Cliente Viejo', tipoDocumento: 'RUC', numeroDocumento: '11111111-1' } };
+  const borradorPrevio = { ...borradorVacio(), version: 3, cliente: { nombre: 'Cliente Viejo', tipoDocumento: 'RUC', numeroDocumento: '11111111-0' } };
   const { sesion } = setupMundo(t, { sesionEstado: ESTADOS_SESION.COMPLETADA, datosTemporales: borradorPrevio });
   t.mock.method(facturaParserService, 'interpretar', async () => salidaParser('SALUDO', facturaVacia()));
 

@@ -40,17 +40,18 @@ const capitalizarPrimeraLetra = (texto) => (texto ? texto.charAt(0).toUpperCase(
 const mismoItem = (a, b) =>
   a.descripcion === b.descripcion && a.cantidad === b.cantidad && a.precioUnitario === b.precioUnitario && a.tasa === b.tasa;
 
-// Normaliza el documento del cliente (RUC o cédula) que devolvió la IA. Solo el RUC
-// tiene un formato validable (NNN...-D). La cédula no tiene dígito verificador ni
-// formato a validar, pero la IA a veces la transcribe con puntos de miles (ej.
-// "1.707.143"): nos quedamos solo con la parte numérica, sin inventar un algoritmo
-// de checksum (igual criterio que ya se usaba para RUC).
+// Normaliza el documento del cliente (RUC o cédula) que devolvió la IA. El RUC se valida
+// en formato (NNN...-D) y por dígito verificador (Módulo 11, ver utils/ruc.js): un RUC con
+// un dígito cambiado puede ser el de otra persona, y este es el último punto donde el
+// usuario todavía tiene al cliente enfrente para corregirlo. La cédula no tiene dígito
+// verificador ni formato a validar, pero la IA a veces la transcribe con puntos de miles
+// (ej. "1.707.143"): nos quedamos solo con la parte numérica, sin inventar un checksum.
 const normalizarDocumento = (tipoDocumentoIA, numeroDocumentoIA) => {
   const tipoDocumento = tipoDocumentoIA === 'RUC' || tipoDocumentoIA === 'CI' ? tipoDocumentoIA : null;
   const numeroCrudo = typeof numeroDocumentoIA === 'string' && numeroDocumentoIA.trim() ? numeroDocumentoIA.trim() : null;
 
   if (!numeroCrudo) {
-    return { tipoDocumento: null, numeroDocumento: null, invalido: false };
+    return { tipoDocumento: null, numeroDocumento: null, invalido: false, motivoInvalido: null };
   }
 
   // Número presente pero todavía sin tipo (SOLICITAR_ACLARACION "¿es RUC o cédula?"):
@@ -58,16 +59,16 @@ const normalizarDocumento = (tipoDocumentoIA, numeroDocumentoIA) => {
   // tipo en el próximo mensaje ("es cédula"), la IA lo recupere del "Borrador actual"
   // sin que el usuario tenga que repetir el número.
   if (!tipoDocumento) {
-    return { tipoDocumento: null, numeroDocumento: numeroCrudo, invalido: false };
+    return { tipoDocumento: null, numeroDocumento: numeroCrudo, invalido: false, motivoInvalido: null };
   }
 
   if (tipoDocumento === 'RUC') {
     const ruc = normalizarRuc(numeroCrudo);
-    return { tipoDocumento: ruc.valor ? 'RUC' : null, numeroDocumento: ruc.valor, invalido: ruc.invalido };
+    return { tipoDocumento: ruc.valor ? 'RUC' : null, numeroDocumento: ruc.valor, invalido: ruc.invalido, motivoInvalido: ruc.motivo };
   }
 
   const cedula = numeroCrudo.replace(/\D+/g, '');
-  return { tipoDocumento: cedula ? 'CI' : null, numeroDocumento: cedula || null, invalido: !cedula };
+  return { tipoDocumento: cedula ? 'CI' : null, numeroDocumento: cedula || null, invalido: !cedula, motivoInvalido: cedula ? null : 'formato' };
 };
 
 // Reconstruye el borrador completo a partir de la salida (ya validada por Zod) del
@@ -116,7 +117,16 @@ const construirBorrador = (facturaIA, borradorAnteriorCrudo, advertenciasIA = []
   if (!nombre) camposFaltantes.push('Nombre del cliente');
 
   if (!documento.tipoDocumento || !documento.numeroDocumento) {
-    camposFaltantes.push(documento.invalido ? 'RUC o cédula del cliente (el formato indicado no es válido)' : 'RUC o cédula del cliente');
+    // El motivo se distingue porque se corrigen distinto: un DV que no cierra casi nunca es un DV
+    // mal tipeado, es un dígito equivocado en el número — y decir "formato inválido" mandaría al
+    // usuario a revisar justo lo que está bien.
+    if (!documento.invalido) {
+      camposFaltantes.push('RUC o cédula del cliente');
+    } else if (documento.motivoInvalido === 'dv') {
+      camposFaltantes.push('RUC del cliente (el dígito verificador no corresponde: verificá el número con el cliente)');
+    } else {
+      camposFaltantes.push('RUC o cédula del cliente (el formato indicado no es válido)');
+    }
   }
 
   if (items.length === 0) {

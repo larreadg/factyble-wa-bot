@@ -74,7 +74,7 @@ test('aclaración de tipo sobre un número pendiente: el usuario solo dice "es c
 
 test('caso 3: sin precio unitario pide el precio del producto correspondiente', () => {
   const facturaIA = {
-    cliente: { nombre: 'María Benítez', tipoDocumento: 'RUC', numeroDocumento: '80000000-1' },
+    cliente: { nombre: 'María Benítez', tipoDocumento: 'RUC', numeroDocumento: '80000000-5' },
     condicionVenta: 'CONTADO',
     items: [{ descripcion: 'Peluche de oso', cantidad: 2, precioUnitario: null, tasa: '10%' }],
   };
@@ -119,6 +119,38 @@ test('RUC con formato inválido no se acepta y queda en camposFaltantes', () => 
 
   assert.equal(borrador.cliente.numeroDocumento, null);
   assert.ok(borrador.camposFaltantes.some((c) => c.includes('formato indicado no es válido')));
+});
+
+// Caso real: se pidió factura para "5808589-2" cuando el RUC de la clienta era "5878589-2" (un 7
+// tipeado como 0). El backend no lo encontró, SIFEN respondió que no existe y la emisión falló; peor
+// todavía, la cédula 5808589 existe y es de otra persona, así que el camino de degradación del
+// backend habría emitido a nombre de ese tercero. El DV informado era el del RUC correcto, o sea que
+// el Módulo 11 podía detectarlo acá, mientras el usuario todavía tiene al cliente enfrente.
+test('RUC con dígito verificador que no cierra queda en camposFaltantes, con un mensaje distinto al de formato', () => {
+  const facturaIA = {
+    cliente: { nombre: 'Rocío Mabel Pintos', tipoDocumento: 'RUC', numeroDocumento: '5808589-2' },
+    condicionVenta: 'CONTADO',
+    items: [{ descripcion: 'Jabón mar ch.', cantidad: 12, precioUnitario: 5000, tasa: '10%' }],
+  };
+
+  const borrador = construirBorrador(facturaIA, null, []);
+
+  assert.equal(borrador.cliente.numeroDocumento, null);
+  assert.ok(borrador.camposFaltantes.some((c) => c.includes('dígito verificador no corresponde')));
+  assert.ok(!borrador.camposFaltantes.some((c) => c.includes('formato indicado no es válido')));
+});
+
+test('el RUC correcto del mismo caso se acepta sin campos faltantes', () => {
+  const facturaIA = {
+    cliente: { nombre: 'Rocío Mabel Pintos', tipoDocumento: 'RUC', numeroDocumento: '5878589-2' },
+    condicionVenta: 'CONTADO',
+    items: [{ descripcion: 'Jabón mar ch.', cantidad: 12, precioUnitario: 5000, tasa: '10%' }],
+  };
+
+  const borrador = construirBorrador(facturaIA, null, []);
+
+  assert.equal(borrador.cliente.numeroDocumento, '5878589-2');
+  assert.equal(borrador.camposFaltantes.length, 0);
 });
 
 test('el backend ignora cualquier total propuesto por la IA y siempre recalcula', () => {
@@ -252,7 +284,7 @@ test('cliente distinto (documento diferente y no nulo) descarta ítems idéntico
   const borradorConEmisionPrevia = { ...borradorArnaldo, idempotencyKey: 'clave-vieja', resultadoEmision: { documentoId: 1 } };
 
   const facturaIA = {
-    cliente: { nombre: 'Universidad San Lorenzo', tipoDocumento: 'RUC', numeroDocumento: '1707133-8' },
+    cliente: { nombre: 'Universidad San Lorenzo', tipoDocumento: 'RUC', numeroDocumento: '1707133-0' },
     condicionVenta: 'CONTADO',
     items: [
       // La IA arrastró indebidamente el ítem del cliente anterior (idéntico en todo):
@@ -265,7 +297,7 @@ test('cliente distinto (documento diferente y no nulo) descarta ítems idéntico
 
   assert.equal(borrador.items.length, 1);
   assert.equal(borrador.items[0].descripcion, 'Honorarios por servicio de enseñanza docente');
-  assert.equal(borrador.cliente.numeroDocumento, '1707133-8');
+  assert.equal(borrador.cliente.numeroDocumento, '1707133-0');
   assert.equal(borrador.condicionVenta, 'CONTADO');
   assert.equal(borrador.version, 1);
   assert.equal(borrador.idempotencyKey, null);
@@ -284,7 +316,7 @@ test('cliente distinto con cédula previa también dispara el descarte forzado d
   );
 
   const facturaIA = {
-    cliente: { nombre: 'Universidad San Lorenzo', tipoDocumento: 'RUC', numeroDocumento: '1707133-8' },
+    cliente: { nombre: 'Universidad San Lorenzo', tipoDocumento: 'RUC', numeroDocumento: '1707133-0' },
     condicionVenta: 'CONTADO',
     items: [{ descripcion: 'Honorarios por servicio de enseñanza docente', cantidad: 1, precioUnitario: 1200000, tasa: '0%' }],
   };
