@@ -91,7 +91,7 @@ Variante cuando el usuario ya intentó confirmar:
 > ━━━━━━━━━━━━━━━
 > 👤 Cliente: *<nombre>*
 > 🪪 RUC/CI: *<documento>*
-> 💳 Condición: *<contado/crédito>*
+> 💳 Condición: *<Contado / Crédito (plazo, o "Plazo flexible" si no se indicó)>*
 >
 > 🛒 *Detalle:*
 > 📦 <descripción>

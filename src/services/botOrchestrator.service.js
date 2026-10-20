@@ -306,6 +306,7 @@ const confirmarYEmitir = async ({ contacto, conversacion, sesion, borrador }) =>
       empresa: contacto.empresa,
       cliente: datosConKey.cliente,
       condicionVenta: datosConKey.condicionVenta,
+      plazoCredito: datosConKey.plazoCredito,
       items: datosConKey.items,
       totales: datosConKey.totales,
       idempotencyKey,
@@ -365,7 +366,7 @@ const reintentarEmisionPendiente = async (sesion) => {
     // duplicar si un intento previo llegó a crear el comprobante (ver emitir*.service.js).
     resultado = esNC
       ? await notaCreditoEmisionService.emitirNotaCredito({ empresa: contacto.empresa, cdc: borrador.cdc, items: borrador.items, idempotencyKey, reconciliarPrimero: true })
-      : await facturaEmisionService.emitirFactura({ empresa: contacto.empresa, cliente: borrador.cliente, condicionVenta: borrador.condicionVenta, items: borrador.items, totales: borrador.totales, idempotencyKey, reconciliarPrimero: true });
+      : await facturaEmisionService.emitirFactura({ empresa: contacto.empresa, cliente: borrador.cliente, condicionVenta: borrador.condicionVenta, plazoCredito: borrador.plazoCredito, items: borrador.items, totales: borrador.totales, idempotencyKey, reconciliarPrimero: true });
   } catch (error) {
     const transitorio = esErrorTransitorio(error);
     const agotado = intentos >= env.EMISION_REINTENTO_MAX;

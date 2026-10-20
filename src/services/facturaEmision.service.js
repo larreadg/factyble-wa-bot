@@ -14,12 +14,14 @@ const debeReconciliar = esErrorTransitorio;
 
 // El idempotencyKey se envía como `idExterno`: el backend lo persiste en factura.id_externo
 // y permite recuperar la factura por GET /factura/id-externo/:id para reconciliar reintentos.
-const construirPayload = ({ cliente, condicionVenta, items, idExterno }) => ({
+const construirPayload = ({ cliente, condicionVenta, plazoCredito, items, idExterno }) => ({
   // RUC -> CONTRIBUYENTE, cédula (CI) -> NO_CONTRIBUYENTE (ver contrato de POST /factura/simple).
   situacionTributaria: cliente.tipoDocumento === 'CI' ? 'NO_CONTRIBUYENTE' : 'CONTRIBUYENTE',
   personaDocumento: cliente.numeroDocumento,
   personaNombre: cliente.nombre,
   condicionVenta,
+  // /factura/simple emite el crédito siempre "a plazo": sin plazoDescripcion usa "Plazo flexible".
+  ...(condicionVenta === 'CREDITO' && plazoCredito ? { plazoDescripcion: plazoCredito } : {}),
   idExterno,
   items: items.map(({ cantidad, precioUnitario, tasa, descripcion }) => ({
     cantidad,
@@ -87,7 +89,7 @@ const reconciliarPorIdExterno = async (token, idExterno) => {
  * pendiente de aprobación asíncrona en SIFEN), pero el PDF ya está generado y en disco
  * cuando /factura/simple responde, así que el orquestador lo descarga y se lo envía al
  * cliente en el acto, sin esperar el estado final (ver botOrchestrator.service.js).
- * @param {{ empresa: object, cliente: {nombre: string, tipoDocumento: 'RUC'|'CI', numeroDocumento: string}, condicionVenta: 'CONTADO'|'CREDITO', items: Array<{descripcion: string, cantidad: number, precioUnitario: number, tasa: '0%'|'5%'|'10%'}>, totales: {subtotal: number, totalGeneral: number}, idempotencyKey: string }} params
+ * @param {{ empresa: object, cliente: {nombre: string, tipoDocumento: 'RUC'|'CI', numeroDocumento: string}, condicionVenta: 'CONTADO'|'CREDITO', plazoCredito?: string|null, items: Array<{descripcion: string, cantidad: number, precioUnitario: number, tasa: '0%'|'5%'|'10%'}>, totales: {subtotal: number, totalGeneral: number}, idempotencyKey: string }} params
  * @returns {Promise<{ documentoId: string, numero: string, numeroFormateado: string, cdc: string, pdfNombre: string, clienteNombre: string, clienteDocumento: string, estadoSifen: string, sifenEstadoMensaje: string }>}
  */
 // Una emisión, con reautenticación única ante token cacheado inválido (revocado, reloj
@@ -107,10 +109,10 @@ const emitirConReautenticacion = async (empresa, token, payload, idempotencyKey)
   }
 };
 
-const emitirFactura = async ({ empresa, cliente, condicionVenta, items, idempotencyKey, reconciliarPrimero = false }) => {
+const emitirFactura = async ({ empresa, cliente, condicionVenta, plazoCredito = null, items, idempotencyKey, reconciliarPrimero = false }) => {
   // El body lleva idExterno = idempotencyKey: mismo comprobante, mismo id_externo en cada
   // reintento de fondo, para que la reconciliación por idExterno funcione y no se duplique.
-  const payload = construirPayload({ cliente, condicionVenta, items, idExterno: idempotencyKey });
+  const payload = construirPayload({ cliente, condicionVenta, plazoCredito, items, idExterno: idempotencyKey });
 
   const token = await obtenerToken(empresa);
 

@@ -326,7 +326,17 @@ const MENU_IDS = Object.freeze({
   CANCELAR_DOCUMENTO: 'op_cancelar_doc',
 });
 
+// Plazo de una factura a crédito: POST /factura/simple lo recibe como `plazoDescripcion`
+// (SIFEN E643 `dPlazoCre`, texto de 2 a 15 caracteres). Si no se manda, el backend emite con
+// PLAZO_CREDITO_POR_DEFECTO; el bot lo usa solo para mostrar en el resumen lo mismo que va a salir.
+const PLAZO_CREDITO = Object.freeze({
+  MIN: 2,
+  MAX: 15,
+  POR_DEFECTO: 'Plazo flexible',
+});
+
 module.exports = {
+  PLAZO_CREDITO,
   ESTADOS_SESION,
   ESTADOS_TERMINALES,
   MENSAJE_BIENVENIDA,

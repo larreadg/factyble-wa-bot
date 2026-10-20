@@ -1,4 +1,5 @@
 const { formatearGuaranies } = require('./moneda');
+const { PLAZO_CREDITO } = require('./constants');
 
 const construirMensajeCamposFaltantes = (camposFaltantes, { intentoConfirmar = false, advertencias = [] } = {}) => {
   const lineas = camposFaltantes.map((campo) => `🔸 _${campo}_`).join('\n');
@@ -19,7 +20,11 @@ const construirLineaItem = (item) =>
 
 const construirResumenConfirmacion = (borrador) => {
   const lineasItems = borrador.items.map(construirLineaItem).join('\n');
-  const condicionVentaTexto = borrador.condicionVenta === 'CREDITO' ? 'Crédito' : 'Contado';
+  // A crédito se muestra el plazo que va a salir en la factura: el que dijo el usuario o, si no
+  // dijo ninguno, el default con el que emite el backend.
+  const condicionVentaTexto = borrador.condicionVenta === 'CREDITO'
+    ? `Crédito (${borrador.plazoCredito || PLAZO_CREDITO.POR_DEFECTO})`
+    : 'Contado';
   const etiquetaDocumento = borrador.cliente.tipoDocumento === 'CI' ? 'Cédula' : 'RUC';
   const separador = '━━━━━━━━━━━━━━━';
 

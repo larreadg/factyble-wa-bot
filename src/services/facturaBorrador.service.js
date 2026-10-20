@@ -1,6 +1,7 @@
 const { normalizarTexto } = require('../utils/texto');
 const { normalizarRuc } = require('../utils/ruc');
 const { TASAS_IVA } = require('./facturaParser.service');
+const { PLAZO_CREDITO } = require('../utils/constants');
 
 const TASA_POR_DEFECTO = '10%';
 const CONDICION_VENTA_POR_DEFECTO = 'CONTADO';
@@ -9,6 +10,7 @@ const borradorVacio = () => ({
   version: 0,
   cliente: { nombre: null, tipoDocumento: null, numeroDocumento: null },
   condicionVenta: CONDICION_VENTA_POR_DEFECTO,
+  plazoCredito: null,
   items: [],
   camposFaltantes: [],
   advertencias: [],
@@ -82,6 +84,10 @@ const construirBorrador = (facturaIA, borradorAnteriorCrudo, advertenciasIA = []
   const nombre = normalizarTexto(facturaIA?.cliente?.nombre);
   const documento = normalizarDocumento(facturaIA?.cliente?.tipoDocumento, facturaIA?.cliente?.numeroDocumento);
   const condicionVenta = facturaIA?.condicionVenta === 'CREDITO' ? 'CREDITO' : CONDICION_VENTA_POR_DEFECTO;
+  // El plazo solo existe en una venta a crédito: si la IA lo devolviera en una al contado, se descarta.
+  // NFC: el tope de 15 se cuenta en caracteres (String.length, igual que el backend), y una tilde
+  // descompuesta ("i" + acento) contaría doble.
+  const plazoCredito = condicionVenta === 'CREDITO' ? normalizarTexto(facturaIA?.plazoCredito)?.normalize('NFC') ?? null : null;
 
   // El prompt le indica a la IA que, ante un cliente distinto (documento no nulo y
   // diferente al del borrador anterior), reinicie la factura desde cero. No confiamos
@@ -129,6 +135,16 @@ const construirBorrador = (facturaIA, borradorAnteriorCrudo, advertenciasIA = []
     }
   }
 
+  // Sin plazo se emite con el default del backend, así que no es un dato faltante. Pero uno
+  // fuera de 2-15 caracteres lo rechazaría la API con un 400: se le pide uno más corto acá,
+  // antes del resumen, en vez de recortarlo y emitir un plazo que el usuario no dijo.
+  if (plazoCredito && (plazoCredito.length < PLAZO_CREDITO.MIN || plazoCredito.length > PLAZO_CREDITO.MAX)) {
+    // Se muestra el plazo actual y el tope concreto: "más corto" a secas no le dice al usuario qué cambiar.
+    camposFaltantes.push(
+      `Un plazo de crédito más corto: "${plazoCredito}" no entra en la factura (hasta ${PLAZO_CREDITO.MAX} caracteres, ej. "30 días" o "Hasta 30/11")`,
+    );
+  }
+
   if (items.length === 0) {
     camposFaltantes.push('Al menos un producto o servicio');
   }
@@ -145,6 +161,7 @@ const construirBorrador = (facturaIA, borradorAnteriorCrudo, advertenciasIA = []
     version,
     cliente: { nombre, tipoDocumento: documento.tipoDocumento, numeroDocumento: documento.numeroDocumento },
     condicionVenta,
+    plazoCredito,
     items,
     camposFaltantes,
     advertencias: Array.isArray(advertenciasIA) ? advertenciasIA.slice(0, 20) : [],
@@ -161,17 +178,18 @@ const sanitizarBorradorParaIA = (borradorCrudo) => {
   return {
     cliente: borrador.cliente,
     condicionVenta: borrador.condicionVenta,
+    plazoCredito: borrador.plazoCredito ?? null,
     items: borrador.items.map(({ descripcion, cantidad, precioUnitario, tasa }) => ({ descripcion, cantidad, precioUnitario, tasa })),
   };
 };
 
-// Compara solo los datos de negocio (cliente, condición de venta, ítems), ignorando
+// Compara solo los datos de negocio (cliente, condición de venta y plazo, ítems), ignorando
 // version/camposFaltantes/advertencias/totales/idempotencyKey/resultadoEmision. Se usa
 // para detectar cuando un mensaje del usuario no produjo ningún cambio real en el
 // borrador (ej. una corrección que la IA no supo aplicar), para avisarle en vez de
 // reenviar la misma confirmación en silencio.
 const sonEquivalentes = (borradorA, borradorB) => {
-  const proyectar = (b) => ({ cliente: b.cliente, condicionVenta: b.condicionVenta, items: b.items.map(({ subtotal, ...resto }) => resto) });
+  const proyectar = (b) => ({ cliente: b.cliente, condicionVenta: b.condicionVenta, plazoCredito: b.plazoCredito ?? null, items: b.items.map(({ subtotal, ...resto }) => resto) });
   return JSON.stringify(proyectar(borradorA)) === JSON.stringify(proyectar(borradorB));
 };
 
