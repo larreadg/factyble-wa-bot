@@ -97,10 +97,57 @@ Dame unos segundos ⚙️`,
 Ya quedó registrada a tu nombre y te vamos a hacer llegar el PDF por acá 📄
 Quedate tranquilo, de esto nos encargamos nosotros 🙌`,
 
-  SOLO_TEXTO_SOPORTADO: `📝 *Por ahora solo puedo procesar mensajes de texto y audios.*
+  SOLO_TEXTO_SOPORTADO: `📝 *Por ahora solo puedo procesar mensajes de texto, audios y fotos de facturas.*
 
-Todavía no puedo leer imágenes ni archivos 🙏
+Todavía no puedo leer otro tipo de archivos 🙏
 Escribime lo que necesitás y te ayudo con gusto.`,
+
+  IMAGEN_PROCESANDO: `📷 *Recibí la foto, la estoy leyendo...*
+
+Dame unos segundos 🙂`,
+
+  IMAGEN_NO_DISPONIBLE: `⚠️ *No pude descargar la foto que me enviaste.*
+
+Probá una de estas opciones:
+🔁 Reenviá la foto
+⌨️ O escribime los datos de la factura en texto`,
+
+  IMAGEN_FORMATO_NO_SOPORTADO: `⚠️ *No puedo leer ese archivo.*
+
+Mandame la factura como foto (JPG o PNG) 📷
+⌨️ O escribime los datos en texto`,
+
+  IMAGEN_NO_LEGIBLE: `⚠️ *No logré leer la foto.*
+
+Probá sacarla de nuevo:
+💡 Con buena luz y sin sombras
+📐 De frente, con la factura completa en la imagen
+🔍 Que se lean bien los números
+
+⌨️ O escribime los datos en texto`,
+
+  IMAGEN_SIN_FACTURA: `🤔 *No encontré los datos de una venta en esa imagen.*
+
+Mandame una foto de la factura o comprobante, donde se vean el cliente y los productos 📷
+⌨️ O escribime los datos en texto`,
+
+  IMAGEN_VARIAS_FOTOS: `📷 *Recibí varias fotos juntas, pero solo puedo procesar una foto a la vez.*
+
+Por favor, volvé a mandarme *una sola foto* de la factura que querés emitir 🙏`,
+
+  IMAGEN_LECTURA_EN_CURSO: `⏳ *Todavía estoy leyendo la foto anterior.*
+
+Solo puedo procesar una foto a la vez: esperá el resumen y, si esa no era la factura correcta, mandame la otra foto después 🙏`,
+
+  IMAGEN_DESCARTADA_SESION_CAMBIO: `⚠️ *No usé la foto que me mandaste.*
+
+Mientras la leía cambió lo que estábamos haciendo (por ejemplo, empezaste otra operación o se confirmó la factura anterior), así que la dejé de lado para no mezclar los datos.
+
+📷 Si querés facturar con esa foto, mandámela de nuevo.`,
+
+  IMAGEN_SOLO_FACTURA: `📷 *Por ahora las fotos solo las puedo usar para emitir facturas.*
+
+Para seguir con lo que estábamos haciendo, escribime en texto 🙏`,
 
   AUDIO_NO_DISPONIBLE: `⚠️ *No pude descargar el audio que me enviaste.*
 

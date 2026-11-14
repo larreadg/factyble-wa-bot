@@ -45,6 +45,26 @@ const actualizarEstadoPorWhatsappId = async (whatsappMensajeId, estado) => {
   await prisma.mensaje.updateMany({ where: { whatsappMensajeId }, data: { estado } });
 };
 
+// Fotos entrantes de una conversación que llegaron entre `desde` y `hasta`. Se filtra por
+// fechaCreacion (hora en que recibimos el webhook, con milisegundos) y no por fechaMensaje (hora
+// de Meta, con precisión de segundos): sirve para detectar varias fotos mandadas juntas, que
+// WhatsApp entrega como mensajes separados con uno o dos segundos de diferencia (ver
+// manejarImagenEntrante en botOrchestrator.service.js). `fechaMensajeMinima` deja afuera las
+// reentregas demoradas del webhook, que se registran pero nunca se procesan.
+const listarImagenesEntrantesEntre = (conversacionId, desde, hasta, fechaMensajeMinima) => {
+  return prisma.mensaje.findMany({
+    where: {
+      conversacionId,
+      direccion: 'ENTRANTE',
+      tipo: 'IMAGEN',
+      fechaCreacion: { gte: desde, lte: hasta },
+      ...(fechaMensajeMinima ? { fechaMensaje: { gte: fechaMensajeMinima } } : {}),
+    },
+    select: { id: true, fechaCreacion: true },
+    orderBy: { id: 'asc' },
+  });
+};
+
 const crearArchivo = ({ mensajeId, whatsappMediaId, nombreArchivo, mimeType, tamanioBytes, rutaArchivo, transcripcion }) => {
   return prisma.mensajeArchivo.create({
     data: { mensajeId, whatsappMediaId, nombreArchivo, mimeType, tamanioBytes, rutaArchivo, transcripcion },
@@ -62,4 +82,4 @@ const listarParaExportar = (conversacionId, desdeMensajeId) => {
   });
 };
 
-module.exports = { registrarEntrante, registrarSaliente, actualizarEstadoPorWhatsappId, crearArchivo, listarParaExportar };
+module.exports = { registrarEntrante, registrarSaliente, actualizarEstadoPorWhatsappId, crearArchivo, listarParaExportar, listarImagenesEntrantesEntre };

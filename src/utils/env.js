@@ -1,5 +1,11 @@
 require('dotenv').config();
 
+const enteroNoNegativo = (valor, porDefecto) => {
+  if (valor == null || String(valor).trim() === '') return porDefecto;
+  const numero = Number(valor);
+  return Number.isInteger(numero) && numero >= 0 ? numero : porDefecto;
+};
+
 module.exports = {
   PORT: process.env.PORT || 3000,
   NODE_ENV: process.env.NODE_ENV || 'development',
@@ -25,6 +31,18 @@ module.exports = {
   OPENAI_PROMPT_CACHE_KEY: process.env.OPENAI_PROMPT_CACHE_KEY || 'factyble:invoice-parser:v1',
   OPENAI_MAX_OUTPUT_TOKENS: Number(process.env.OPENAI_MAX_OUTPUT_TOKENS) || 1000,
   OPENAI_TIMEOUT_MS: Number(process.env.OPENAI_TIMEOUT_MS) || 15000,
+  // Lectura de fotos de facturas físicas (facturaImagenParser.service.js). Por defecto el mismo
+  // modelo que el parser de texto; timeout y tope de salida más altos porque una imagen en
+  // detalle alto con hasta 20 ítems tarda y produce bastante más que un mensaje de texto.
+  OPENAI_VISION_MODEL: process.env.OPENAI_VISION_MODEL || process.env.OPENAI_MODEL || 'gpt-5.4-mini',
+  OPENAI_VISION_TIMEOUT_MS: Number(process.env.OPENAI_VISION_TIMEOUT_MS) || 45000,
+  OPENAI_VISION_MAX_OUTPUT_TOKENS: Number(process.env.OPENAI_VISION_MAX_OUTPUT_TOKENS) || 2500,
+  // Fotos que llegan con menos de esta diferencia entre sí se consideran mandadas juntas (un
+  // álbum): no se procesa ninguna y se pide una sola. Cada foto espera este tiempo antes de
+  // leerse, para dar lugar a que lleguen las demás. A diferencia del resto, 0 es un valor válido
+  // (desactiva la espera; lo usan los tests), así que no alcanza con `|| default`: un valor vacío o
+  // no numérico cae al default en vez de quedar en 0 (control apagado) o NaN (fechas inválidas).
+  IMAGEN_RAFAGA_VENTANA_MS: enteroNoNegativo(process.env.IMAGEN_RAFAGA_VENTANA_MS, 4000),
 
   // API de facturación (POST /usuario/authenticate, POST /factura/simple, GET /public/*).
   FACTURACION_API_BASE_URL: process.env.FACTURACION_API_BASE_URL,

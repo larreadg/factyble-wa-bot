@@ -18,7 +18,10 @@ const construirLineaItem = (item) =>
     `    ${item.cantidad} × ${formatearGuaranies(item.precioUnitario)} — IVA ${item.tasa} — Subtotal: ${formatearGuaranies(item.subtotal)}`,
   ].join('\n');
 
-const construirResumenConfirmacion = (borrador) => {
+// `advertencias` es opcional y solo lo pasa el flujo de fotos: ahí son los avisos de lectura
+// dudosa (montos que no cierran, dígitos ilegibles) y el usuario tiene que verlos justo antes
+// de confirmar. El flujo de texto no las muestra en el resumen (ver botOrchestrator).
+const construirResumenConfirmacion = (borrador, { advertencias = [] } = {}) => {
   const lineasItems = borrador.items.map(construirLineaItem).join('\n');
   // A crédito se muestra el plazo que va a salir en la factura: el que dijo el usuario o, si no
   // dijo ninguno, el default con el que emite el backend.
@@ -41,6 +44,7 @@ const construirResumenConfirmacion = (borrador) => {
     separador,
     `💰 *TOTAL: ${formatearGuaranies(borrador.totales.totalGeneral)}*`,
     '',
+    ...(advertencias.length ? ['*Revisá esto antes de confirmar:*', ...advertencias.map((advertencia) => `⚠️ _${advertencia}_`), ''] : []),
     '¿Está todo correcto? 😊',
     '✅ Escribí *"sí"* para emitir',
     '✏️ O decime qué querés corregir',

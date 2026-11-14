@@ -15,12 +15,15 @@ const cancelacionDocumentoService = require('../../src/services/cancelacionDocum
 const documentoService = require('../../src/services/documento.service');
 const documentoNotificacionService = require('../../src/services/documentoNotificacion.service');
 const chatExportService = require('../../src/services/chatExport.service');
+const facturaImagenParserService = require('../../src/services/facturaImagenParser.service');
+const { OpenAIServiceError } = require('../../src/services/openai.errors');
 const telegramService = require('../../src/services/telegram.service');
 const { FacturaApiError } = require('../../src/services/facturaApi.errors');
 const { borradorVacio, construirBorrador } = require('../../src/services/facturaBorrador.service');
 const { borradorVacio: borradorVacioNC, construirBorrador: construirBorradorNC } = require('../../src/services/notaCreditoBorrador.service');
-const { ESTADOS_SESION, MENSAJE_BIENVENIDA, MENSAJES, OPERACIONES, MENU_IDS } = require('../../src/utils/constants');
+const { ESTADOS_SESION, MENSAJE_BIENVENIDA, MENSAJES, OPERACIONES, MENU_IDS, MENSAJE_ANTIGUEDAD_MAXIMA_MS } = require('../../src/utils/constants');
 
+const env = require('../../src/utils/env');
 const botOrchestrator = require('../../src/services/botOrchestrator.service');
 
 const CONTACTO = {
@@ -765,18 +768,376 @@ test('COMPLETADA se reinicia a INICIO ante un nuevo mensaje, descartando el borr
   assert.equal(sesion.datosTemporales.cliente.nombre, null);
 });
 
-test('mensajes no soportados (audio/imagen) responden que solo se procesa texto', async (t) => {
-  const { salientes } = setupMundo(t, { sesionEstado: ESTADOS_SESION.INICIO });
+// Antes usaba type 'audio', que hoy sí se procesa (y sin downloadMedia mockeado salía a la red).
+test('mensajes no soportados (video, documento PDF) responden con los tipos soportados', async (t) => {
+  for (const extra of [
+    { type: 'video', video: { id: 'media123' } },
+    { type: 'document', document: { id: 'media124', mime_type: 'application/pdf', filename: 'factura.pdf' } },
+  ]) {
+    const { salientes } = setupMundo(t, { sesionEstado: ESTADOS_SESION.INICIO });
+
+    await botOrchestrator.procesarMensajeEntrante({
+      from: CONTACTO.numeroTelefono,
+      id: `wamid.${mensajeIdSeq++}`,
+      timestamp: `${Math.floor(Date.now() / 1000)}`,
+      ...extra,
+    });
+
+    assert.deepEqual(textoEnviado(salientes), [MENSAJES.SOLO_TEXTO_SOPORTADO]);
+  }
+});
+
+// ---- Fotos de facturas físicas ----
+
+const mensajeImagen = (overrides = {}) => ({
+  from: CONTACTO.numeroTelefono,
+  id: `wamid.${mensajeIdSeq++}`,
+  type: 'image',
+  image: { id: 'media.img.1', mime_type: 'image/jpeg' },
+  timestamp: `${Math.floor(Date.now() / 1000)}`,
+  ...overrides,
+});
+
+const salidaImagen = (overrides = {}) => ({
+  esComprobanteDeVenta: true,
+  cliente: { nombre: 'Juan Pérez', tipoDocumento: 'RUC', numeroDocumento: '5249657-0' },
+  condicionVenta: 'CONTADO',
+  plazoCredito: null,
+  items: [{ descripcion: 'Cemento', cantidad: 2, precioUnitario: 50000, importeLinea: 100000, tasa: '10%' }],
+  totalImpreso: 100000,
+  advertencias: [],
+  ...overrides,
+});
+
+// `cercanas`: lo que devuelve la consulta de fotos recibidas cerca de esta (por defecto ninguna,
+// o sea foto sola). La espera de la ráfaga se pone en 0 para no demorar los tests.
+const setupImagen = (t, { salida = salidaImagen(), mimeType = 'image/jpeg', cercanas = [], ventanaMs = 0, ...opcionesMundo } = {}) => {
+  const ventanaOriginal = env.IMAGEN_RAFAGA_VENTANA_MS;
+  env.IMAGEN_RAFAGA_VENTANA_MS = ventanaMs;
+  t.after(() => {
+    env.IMAGEN_RAFAGA_VENTANA_MS = ventanaOriginal;
+  });
+
+  const mundo = setupMundo(t, opcionesMundo);
+  const consultaCercanas = t.mock.method(mensajeService, 'listarImagenesEntrantesEntre', async () => cercanas);
+  const archivos = [];
+  t.mock.method(mensajeService, 'crearArchivo', async (data) => {
+    archivos.push(data);
+    return {};
+  });
+  const descarga = t.mock.method(whatsappService, 'downloadMedia', async () => ({ buffer: Buffer.from('jpeg'), mimeType }));
+  const interpretar = t.mock.method(facturaImagenParserService, 'interpretarImagen', async () => {
+    if (salida instanceof Error) throw salida;
+    return salida;
+  });
+  return { ...mundo, archivos, descarga, interpretar, consultaCercanas };
+};
+
+// Fija el id/hora con que queda registrada la próxima foto entrante.
+const fijarMensajeEntrante = (t, mensaje) =>
+  t.mock.method(mensajeService, 'registrarEntrante', async () => ({ mensaje, duplicado: false }));
+
+test('imagen: foto completa de una factura muestra el resumen y espera confirmación (no emite)', async (t) => {
+  const { sesion, salientes, archivos, interpretar } = setupImagen(t);
+  const emitirSpy = t.mock.method(facturaEmisionService, 'emitirFactura', async () => {
+    throw new Error('no debería emitir sin confirmación');
+  });
+
+  await botOrchestrator.procesarMensajeEntrante(mensajeImagen({ image: { id: 'media.img.1', mime_type: 'image/jpeg', caption: 'es a crédito' } }));
+
+  const textos = textoEnviado(salientes);
+  assert.equal(textos[0], MENSAJES.IMAGEN_PROCESANDO);
+  assert.match(textos[1], /Resumen de tu factura/);
+  assert.match(textos[1], /Juan Pérez/);
+  assert.doesNotMatch(textos[1], /Revisá esto/, 'sin advertencias no se agrega el bloque');
+  assert.equal(sesion.estado, ESTADOS_SESION.ESPERANDO_CONFIRMACION);
+  assert.equal(sesion.operacionActiva, OPERACIONES.EMITIR_FACTURA);
+  assert.equal(sesion.datosTemporales.items[0].subtotal, 100000);
+  assert.equal(emitirSpy.mock.callCount(), 0);
+
+  const { leyenda, emisor } = interpretar.mock.calls[0].arguments[0];
+  assert.equal(leyenda, 'es a crédito');
+  assert.deepEqual(emisor, { ruc: CONTACTO.empresa.ruc, razonSocial: CONTACTO.empresa.razonSocial });
+
+  assert.equal(archivos.length, 1);
+  assert.equal(archivos[0].whatsappMediaId, 'media.img.1');
+  assert.deepEqual(JSON.parse(archivos[0].transcripcion), salidaImagen());
+});
+
+test('imagen: las advertencias de lectura (total que no cierra) se muestran en el resumen', async (t) => {
+  const { salientes } = setupImagen(t, { salida: salidaImagen({ totalImpreso: 150000 }) });
+
+  await botOrchestrator.procesarMensajeEntrante(mensajeImagen());
+
+  const resumen = textoEnviado(salientes)[1];
+  assert.match(resumen, /Revisá esto antes de confirmar/);
+  assert.match(resumen, /no coincide con el total/);
+});
+
+test('imagen: con datos ilegibles pide los campos faltantes', async (t) => {
+  const { sesion, salientes } = setupImagen(t, {
+    salida: salidaImagen({
+      cliente: { nombre: 'Juan Pérez', tipoDocumento: null, numeroDocumento: null },
+      advertencias: ['No se lee bien el RUC del cliente'],
+    }),
+  });
+
+  await botOrchestrator.procesarMensajeEntrante(mensajeImagen());
+
+  const mensaje = textoEnviado(salientes)[1];
+  assert.match(mensaje, /RUC o cédula del cliente/);
+  assert.match(mensaje, /No se lee bien el RUC del cliente/);
+  assert.equal(sesion.estado, ESTADOS_SESION.CAPTURANDO_DATOS);
+});
+
+test('imagen: reemplaza el borrador en curso en vez de mezclarse con él', async (t) => {
+  const borradorPrevio = construirBorrador(
+    {
+      cliente: { nombre: 'Otro Cliente', tipoDocumento: 'CI', numeroDocumento: '1234567' },
+      condicionVenta: 'CONTADO',
+      items: [{ descripcion: 'Arroz', cantidad: 1, precioUnitario: 1000, tasa: '10%' }],
+    },
+    null,
+  );
+  const { sesion } = setupImagen(t, {
+    sesionEstado: ESTADOS_SESION.ESPERANDO_CONFIRMACION,
+    operacionActiva: OPERACIONES.EMITIR_FACTURA,
+    datosTemporales: { ...borradorPrevio, idempotencyKey: 'clave-vieja' },
+  });
+
+  await botOrchestrator.procesarMensajeEntrante(mensajeImagen());
+
+  assert.equal(sesion.datosTemporales.cliente.nombre, 'Juan Pérez');
+  assert.deepEqual(sesion.datosTemporales.items.map((item) => item.descripcion), ['Cemento']);
+  assert.equal(sesion.datosTemporales.idempotencyKey, null);
+  assert.equal(sesion.estado, ESTADOS_SESION.ESPERANDO_CONFIRMACION);
+});
+
+test('imagen: algo que no es un comprobante responde que no encontró una venta', async (t) => {
+  const { sesion, salientes } = setupImagen(t, {
+    salida: salidaImagen({
+      esComprobanteDeVenta: false,
+      cliente: { nombre: null, tipoDocumento: null, numeroDocumento: null },
+      items: [],
+      totalImpreso: null,
+    }),
+  });
+
+  await botOrchestrator.procesarMensajeEntrante(mensajeImagen());
+
+  assert.deepEqual(textoEnviado(salientes), [MENSAJES.IMAGEN_PROCESANDO, MENSAJES.IMAGEN_SIN_FACTURA]);
+  assert.equal(sesion.estado, ESTADOS_SESION.INICIO);
+  assert.equal(sesion.operacionActiva, null);
+});
+
+test('imagen: error de descarga avisa sin llamar a OpenAI', async (t) => {
+  const { salientes, interpretar } = setupImagen(t);
+  t.mock.method(whatsappService, 'downloadMedia', async () => {
+    throw new Error('WhatsApp API error: 500');
+  });
+
+  await botOrchestrator.procesarMensajeEntrante(mensajeImagen());
+
+  assert.deepEqual(textoEnviado(salientes), [MENSAJES.IMAGEN_NO_DISPONIBLE]);
+  assert.equal(interpretar.mock.callCount(), 0);
+});
+
+test('imagen: formato no soportado (HEIC) avisa sin llamar a OpenAI', async (t) => {
+  const { salientes, interpretar } = setupImagen(t, { mimeType: 'image/heic' });
+
+  await botOrchestrator.procesarMensajeEntrante(mensajeImagen({ image: { id: 'media.img.2', mime_type: 'image/heic' } }));
+
+  assert.deepEqual(textoEnviado(salientes), [MENSAJES.IMAGEN_FORMATO_NO_SOPORTADO]);
+  assert.equal(interpretar.mock.callCount(), 0);
+});
+
+test('imagen: OpenAI caído responde que no está disponible; imagen ilegible pide otra foto', async (t) => {
+  const casos = [
+    [new OpenAIServiceError('TIMEOUT', 'timeout'), MENSAJES.OPENAI_NO_DISPONIBLE],
+    [new OpenAIServiceError('REFUSAL', 'refusal'), MENSAJES.IMAGEN_NO_LEGIBLE],
+    // Respuesta cortada por el tope de tokens: no es culpa de la foto, no se pide otra.
+    [new OpenAIServiceError('INCOMPLETE', 'incomplete'), MENSAJES.OPENAI_NO_DISPONIBLE],
+  ];
+
+  for (const [error, esperado] of casos) {
+    const { salientes } = setupImagen(t, { salida: error });
+    await botOrchestrator.procesarMensajeEntrante(mensajeImagen());
+    assert.deepEqual(textoEnviado(salientes), [MENSAJES.IMAGEN_PROCESANDO, esperado]);
+  }
+});
+
+test('imagen: durante una nota de crédito no se interpreta la foto', async (t) => {
+  const { salientes, descarga } = setupImagen(t, {
+    operacionActiva: OPERACIONES.NOTA_CREDITO,
+    datosTemporales: borradorVacioNC(),
+  });
+
+  await botOrchestrator.procesarMensajeEntrante(mensajeImagen());
+
+  assert.deepEqual(textoEnviado(salientes), [MENSAJES.IMAGEN_SOLO_FACTURA]);
+  assert.equal(descarga.mock.callCount(), 0);
+});
+
+test('imagen: con una emisión en curso solo recuerda que se está procesando', async (t) => {
+  const { salientes, descarga } = setupImagen(t, { sesionEstado: ESTADOS_SESION.PROCESANDO, operacionActiva: OPERACIONES.EMITIR_FACTURA });
+
+  await botOrchestrator.procesarMensajeEntrante(mensajeImagen());
+
+  assert.deepEqual(textoEnviado(salientes), [MENSAJES.YA_PROCESANDO]);
+  assert.equal(descarga.mock.callCount(), 0);
+});
+
+test('imagen: una foto enviada como documento (sin compresión) también se interpreta', async (t) => {
+  const { sesion, interpretar, archivos } = setupImagen(t, { mimeType: 'image/png' });
 
   await botOrchestrator.procesarMensajeEntrante({
     from: CONTACTO.numeroTelefono,
     id: `wamid.${mensajeIdSeq++}`,
-    type: 'audio',
-    audio: { id: 'media123' },
+    type: 'document',
+    document: { id: 'media.doc.1', mime_type: 'image/png', filename: 'factura.png' },
     timestamp: `${Math.floor(Date.now() / 1000)}`,
   });
 
-  assert.deepEqual(textoEnviado(salientes), [MENSAJES.SOLO_TEXTO_SOPORTADO]);
+  assert.equal(interpretar.mock.callCount(), 1);
+  assert.equal(archivos[0].nombreArchivo, 'factura.png');
+  assert.equal(sesion.estado, ESTADOS_SESION.ESPERANDO_CONFIRMACION);
+});
+
+test('imagen: una foto enviada como documento se registra como IMAGEN (cuenta para la ráfaga)', async (t) => {
+  setupImagen(t, { mimeType: 'image/png' });
+  const registro = t.mock.method(mensajeService, 'registrarEntrante', async () => ({ mensaje: { id: mensajeIdSeq++ }, duplicado: false }));
+
+  await botOrchestrator.procesarMensajeEntrante({
+    from: CONTACTO.numeroTelefono,
+    id: `wamid.${mensajeIdSeq++}`,
+    type: 'document',
+    document: { id: 'media.doc.2', mime_type: 'image/png', filename: 'factura.png' },
+    timestamp: `${Math.floor(Date.now() / 1000)}`,
+  });
+
+  assert.equal(registro.mock.calls[0].arguments[0].tipo, 'IMAGEN');
+});
+
+// ---- Varias fotos a la vez ----
+
+test('varias fotos juntas: la primera del grupo avisa que se procesa una sola y no se lee ninguna', async (t) => {
+  const borradorPrevio = borradorVacio();
+  const { sesion, salientes, descarga, interpretar } = setupImagen(t, {
+    cercanas: [{ id: 500 }, { id: 501 }, { id: 502 }],
+    datosTemporales: borradorPrevio,
+  });
+  fijarMensajeEntrante(t, { id: 500 });
+
+  await botOrchestrator.procesarMensajeEntrante(mensajeImagen());
+
+  assert.deepEqual(textoEnviado(salientes), [MENSAJES.IMAGEN_VARIAS_FOTOS]);
+  assert.equal(descarga.mock.callCount(), 0);
+  assert.equal(interpretar.mock.callCount(), 0);
+  assert.equal(sesion.datosTemporales, borradorPrevio, 'el borrador no se toca');
+  assert.equal(sesion.operacionActiva, null);
+});
+
+test('varias fotos juntas: las demás fotos del grupo no responden nada (un solo aviso por grupo)', async (t) => {
+  const { salientes, descarga } = setupImagen(t, { cercanas: [{ id: 500 }, { id: 501 }, { id: 502 }] });
+  fijarMensajeEntrante(t, { id: 501 });
+
+  await botOrchestrator.procesarMensajeEntrante(mensajeImagen());
+
+  assert.deepEqual(textoEnviado(salientes), []);
+  assert.equal(descarga.mock.callCount(), 0);
+});
+
+test('varias fotos juntas: se buscan las fotos recibidas dentro de la ventana alrededor de esta', async (t) => {
+  const recibida = new Date('2026-11-14T12:00:00.000Z');
+  const { consultaCercanas } = setupImagen(t, { ventanaMs: 20, cercanas: [{ id: 500, fechaCreacion: recibida }] });
+  fijarMensajeEntrante(t, { id: 500, fechaCreacion: recibida });
+
+  await botOrchestrator.procesarMensajeEntrante(mensajeImagen());
+
+  const [conversacionId, desde, hasta, fechaMensajeMinima] = consultaCercanas.mock.calls[0].arguments;
+  assert.equal(conversacionId, CONVERSACION.id);
+  assert.equal(desde.getTime(), recibida.getTime() - 20);
+  assert.equal(hasta.getTime(), recibida.getTime() + 20);
+  // Deja afuera las reentregas demoradas del webhook (registradas pero nunca procesadas).
+  const esperada = Date.now() - MENSAJE_ANTIGUEDAD_MAXIMA_MS;
+  assert.ok(Math.abs(fechaMensajeMinima.getTime() - esperada) < 5000);
+});
+
+test('imagen: si durante la lectura el usuario empezó una nota de crédito, la foto se descarta con aviso', async (t) => {
+  const borradorNC = borradorVacioNC();
+  const { sesion, salientes, interpretar } = setupImagen(t);
+  interpretar.mock.mockImplementation(async () => {
+    // Simula que, mientras se leía la foto, el usuario eligió "Nota de crédito" en el menú.
+    sesion.operacionActiva = OPERACIONES.NOTA_CREDITO;
+    sesion.estado = ESTADOS_SESION.INICIO;
+    sesion.datosTemporales = borradorNC;
+    return salidaImagen();
+  });
+
+  await botOrchestrator.procesarMensajeEntrante(mensajeImagen());
+
+  assert.deepEqual(textoEnviado(salientes), [MENSAJES.IMAGEN_PROCESANDO, MENSAJES.IMAGEN_DESCARTADA_SESION_CAMBIO]);
+  assert.equal(sesion.datosTemporales, borradorNC, 'el borrador de la nota de crédito no se pisa');
+  assert.equal(sesion.operacionActiva, OPERACIONES.NOTA_CREDITO);
+});
+
+test('imagen: si durante la lectura se confirmó la factura anterior, la foto se descarta con aviso', async (t) => {
+  const { sesion, salientes, interpretar } = setupImagen(t, { operacionActiva: OPERACIONES.EMITIR_FACTURA });
+  interpretar.mock.mockImplementation(async () => {
+    sesion.estado = ESTADOS_SESION.PROCESANDO;
+    return salidaImagen();
+  });
+
+  await botOrchestrator.procesarMensajeEntrante(mensajeImagen());
+
+  assert.deepEqual(textoEnviado(salientes), [MENSAJES.IMAGEN_PROCESANDO, MENSAJES.IMAGEN_DESCARTADA_SESION_CAMBIO]);
+  assert.equal(sesion.estado, ESTADOS_SESION.PROCESANDO);
+});
+
+test('imagen: si la transición falla igual se le avisa al usuario (nunca queda sin respuesta)', async (t) => {
+  const { salientes } = setupImagen(t);
+  t.mock.method(sesionConversacionalService, 'transicionar', async () => null);
+
+  await botOrchestrator.procesarMensajeEntrante(mensajeImagen());
+
+  assert.deepEqual(textoEnviado(salientes), [MENSAJES.IMAGEN_PROCESANDO, MENSAJES.IMAGEN_DESCARTADA_SESION_CAMBIO]);
+});
+
+test('foto mientras se lee otra: se rechaza con aviso y la primera sigue normalmente', async (t) => {
+  let liberarPrimera;
+  const primeraEnLectura = new Promise((resolve) => {
+    liberarPrimera = resolve;
+  });
+  const { sesion, salientes, interpretar } = setupImagen(t);
+  interpretar.mock.mockImplementation(async () => {
+    await primeraEnLectura;
+    return salidaImagen();
+  });
+
+  const primera = botOrchestrator.procesarMensajeEntrante(mensajeImagen());
+  // Se espera a que la primera foto esté efectivamente en lectura (dentro de interpretarImagen).
+  while (interpretar.mock.callCount() === 0) await new Promise((resolve) => setImmediate(resolve));
+
+  await botOrchestrator.procesarMensajeEntrante(mensajeImagen());
+  assert.deepEqual(textoEnviado(salientes), [MENSAJES.IMAGEN_PROCESANDO, MENSAJES.IMAGEN_LECTURA_EN_CURSO]);
+
+  liberarPrimera();
+  await primera;
+  assert.equal(interpretar.mock.callCount(), 1, 'la segunda foto no se leyó');
+  assert.equal(sesion.estado, ESTADOS_SESION.ESPERANDO_CONFIRMACION);
+
+  // Terminada la lectura, se libera: una foto nueva vuelve a procesarse.
+  await botOrchestrator.procesarMensajeEntrante(mensajeImagen());
+  assert.equal(interpretar.mock.callCount(), 2);
+});
+
+test('foto mientras se lee otra: si la lectura falla, igual se libera para la siguiente', async (t) => {
+  const { interpretar } = setupImagen(t, { salida: new OpenAIServiceError('TIMEOUT', 'timeout') });
+
+  await botOrchestrator.procesarMensajeEntrante(mensajeImagen());
+  await botOrchestrator.procesarMensajeEntrante(mensajeImagen());
+
+  assert.equal(interpretar.mock.callCount(), 2);
 });
 
 // ---- Flujo de nota de crédito ----

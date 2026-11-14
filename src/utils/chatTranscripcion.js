@@ -26,7 +26,13 @@ const contenidoLegible = (mensaje) => {
     const transcripcion = mensaje.archivo?.transcripcion;
     return transcripcion ? `🎤 (audio transcripto) ${transcripcion}` : '🎤 (audio sin transcripción)';
   }
-  if (mensaje.tipo === 'IMAGEN') return '📷 (imagen)';
+  // Para fotos de facturas (también las enviadas como documento, que se registran como IMAGEN),
+  // `transcripcion` guarda el JSON de lo que leyó el extractor (facturaImagenParser.service.js):
+  // se incluye para poder auditar qué se interpretó.
+  if (mensaje.tipo === 'IMAGEN') {
+    const transcripcion = mensaje.archivo?.transcripcion;
+    return transcripcion ? `📷 (imagen) leído: ${transcripcion}` : '📷 (imagen)';
+  }
   if (mensaje.tipo === 'DOCUMENTO') return `📄 (documento)${mensaje.archivo?.nombreArchivo ? ` ${mensaje.archivo.nombreArchivo}` : ''}`;
   return mensaje.contenidoTexto || '';
 };

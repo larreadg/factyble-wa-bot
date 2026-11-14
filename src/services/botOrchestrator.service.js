@@ -42,6 +42,7 @@ const cancelacionDocumentoService = require('./cancelacionDocumento.service');
 const documentoService = require('./documento.service');
 const documentoNotificacionService = require('./documentoNotificacion.service');
 const transcripcionService = require('./transcripcion.service');
+const facturaImagenParserService = require('./facturaImagenParser.service');
 const chatExportService = require('./chatExport.service');
 const telegramService = require('./telegram.service');
 const { OpenAIServiceError } = require('./openai.errors');
@@ -70,25 +71,25 @@ const ESTADO_WHATSAPP_A_ESTADO_MENSAJE = {
 // sensibles); solo se conservan nombre y mensaje para diagnóstico.
 const safeError = (error) => ({ name: error?.name, message: error?.message, type: error?.type });
 
-const mapOpenAIErrorAMensaje = (error) => {
-  if (error instanceof OpenAIServiceError) {
-    if (['TIMEOUT', 'RATE_LIMIT', 'CONNECTION', 'AUTH', 'UNKNOWN'].includes(error.type)) {
-      return MENSAJES.OPENAI_NO_DISPONIBLE;
-    }
-    return MENSAJES.NO_SE_PUDO_INTERPRETAR;
+// Errores de OpenAI que no dependen de lo que mandó el usuario: se le pide que reintente, no que
+// cambie el mensaje/audio/foto.
+const TIPOS_ERROR_OPENAI_NO_DISPONIBLE = ['TIMEOUT', 'RATE_LIMIT', 'CONNECTION', 'AUTH', 'UNKNOWN'];
+
+const mapErrorOpenAIAMensaje = (error, mensajeNoInterpretable, tiposNoDisponible = TIPOS_ERROR_OPENAI_NO_DISPONIBLE) => {
+  if (error instanceof OpenAIServiceError && !tiposNoDisponible.includes(error.type)) {
+    return mensajeNoInterpretable;
   }
   return MENSAJES.OPENAI_NO_DISPONIBLE;
 };
 
-const mapTranscripcionErrorAMensaje = (error) => {
-  if (error instanceof OpenAIServiceError) {
-    if (['TIMEOUT', 'RATE_LIMIT', 'CONNECTION', 'AUTH', 'UNKNOWN'].includes(error.type)) {
-      return MENSAJES.OPENAI_NO_DISPONIBLE;
-    }
-    return MENSAJES.AUDIO_NO_TRANSCRIBIBLE;
-  }
-  return MENSAJES.OPENAI_NO_DISPONIBLE;
-};
+const mapOpenAIErrorAMensaje = (error) => mapErrorOpenAIAMensaje(error, MENSAJES.NO_SE_PUDO_INTERPRETAR);
+
+const mapTranscripcionErrorAMensaje = (error) => mapErrorOpenAIAMensaje(error, MENSAJES.AUDIO_NO_TRANSCRIBIBLE);
+
+// INCOMPLETE (la respuesta se cortó por el tope de tokens, ej. una factura con muchos ítems) no es
+// culpa de la foto: pedir otra foto no lo resolvería.
+const mapImagenErrorAMensaje = (error) =>
+  mapErrorOpenAIAMensaje(error, MENSAJES.IMAGEN_NO_LEGIBLE, [...TIPOS_ERROR_OPENAI_NO_DISPONIBLE, 'INCOMPLETE']);
 
 const responderYRegistrar = async (conversacion, contacto, texto) => {
   let estado = 'PENDIENTE';
@@ -1020,7 +1021,10 @@ const procesarNotaCredito = async ({ contacto, conversacion, sesion, texto }) =>
   await responderYRegistrar(conversacion, contacto, construirResumenConfirmacionNC(borrador));
 };
 
-const manejarSesion = async ({ contacto, conversacion, sesion, texto }) => {
+// Prepara la sesión antes de procesar cualquier mensaje nuevo (texto, audio transcripto o foto):
+// reinicia una sesión terminal y, si hay una emisión/cancelación en curso, le avisa al usuario y
+// devuelve null (el mensaje no se procesa). Si no, devuelve la sesión con la que seguir.
+const prepararSesionParaMensaje = async ({ contacto, conversacion, sesion }) => {
   let sesionActual = sesion;
 
   if (ESTADOS_TERMINALES.includes(sesionActual.estado)) {
@@ -1041,8 +1045,15 @@ const manejarSesion = async ({ contacto, conversacion, sesion, texto }) => {
     if (sesionActual.operacionActiva === OPERACIONES.NOTA_CREDITO) mensaje = MENSAJES.NC_YA_PROCESANDO;
     else if (sesionActual.operacionActiva === OPERACIONES.CANCELAR_DOCUMENTO) mensaje = MENSAJES.CANC_YA_PROCESANDO;
     await responderYRegistrar(conversacion, contacto, mensaje);
-    return;
+    return null;
   }
+
+  return sesionActual;
+};
+
+const manejarSesion = async ({ contacto, conversacion, sesion, texto }) => {
+  const sesionActual = await prepararSesionParaMensaje({ contacto, conversacion, sesion });
+  if (!sesionActual) return;
 
   if (sesionActual.operacionActiva === OPERACIONES.NOTA_CREDITO) {
     await procesarNotaCredito({ contacto, conversacion, sesion: sesionActual, texto });
@@ -1153,6 +1164,199 @@ const manejarAudioEntrante = async ({ contacto, conversacion, sesion, mensajeEnt
   await manejarSesion({ contacto, conversacion, sesion, texto });
 };
 
+// Conversaciones que tienen una foto leyéndose en este momento. Alcanza con tenerlo en memoria
+// porque el bot corre en un solo proceso; si se escalara a varias instancias, este control
+// tendría que pasar a la base de datos.
+const lecturasDeImagenEnCurso = new Set();
+
+const esperar = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// WhatsApp no avisa cuándo varias fotos se mandaron juntas (un álbum o una selección múltiple):
+// cada una llega como un mensaje propio, con uno o dos segundos de diferencia. Por eso cada foto
+// espera IMAGEN_RAFAGA_VENTANA_MS desde que llegó y después busca otras fotos de la conversación
+// recibidas a menos de esa distancia. Si hay, ninguna se procesa, y solo la primera del grupo (la
+// que no tiene ninguna anterior cerca) avisa, para mandar un único mensaje y no uno por foto.
+// Devuelve 'SOLA', 'PRIMERA_DE_VARIAS' u 'OTRA_DE_VARIAS'.
+const clasificarFotoEnRafaga = async ({ conversacion, mensajeEntrante }) => {
+  const ventana = env.IMAGEN_RAFAGA_VENTANA_MS;
+  await esperar(ventana);
+
+  const recibida = mensajeEntrante.fechaCreacion ? new Date(mensajeEntrante.fechaCreacion) : new Date();
+  // Se excluyen las fotos con fecha de Meta vieja: son reentregas demoradas del webhook (ej. tras
+  // una caída), que se registran pero nunca se procesan (ver procesarMensajeEntrante). Si
+  // contaran, una foto real que llegue cerca de una de ellas se descartaría como "varias fotos".
+  const cercanas = await mensajeService.listarImagenesEntrantesEntre(
+    conversacion.id,
+    new Date(recibida.getTime() - ventana),
+    new Date(recibida.getTime() + ventana),
+    new Date(Date.now() - MENSAJE_ANTIGUEDAD_MAXIMA_MS),
+  );
+  const otras = cercanas.filter((mensaje) => mensaje.id !== mensajeEntrante.id);
+
+  if (otras.length === 0) return 'SOLA';
+  return otras.some((mensaje) => mensaje.id < mensajeEntrante.id) ? 'OTRA_DE_VARIAS' : 'PRIMERA_DE_VARIAS';
+};
+
+// Punto de entrada para fotos de facturas físicas (mensajes de tipo imagen, o documentos cuyo
+// mime type es una imagen: el usuario la mandó "sin compresión"). Solo se procesa UNA foto a la
+// vez: varias mandadas juntas se rechazan todas (se le pide al usuario que mande una sola), y una
+// foto que llega mientras se está leyendo otra también. Si no, dos lecturas en paralelo pisarían
+// el mismo borrador y el usuario recibiría dos resúmenes sin saber cuál quedó.
+const manejarImagenEntrante = async ({ contacto, conversacion, mensajeEntrante, waMessage }) => {
+  const rafaga = await clasificarFotoEnRafaga({ conversacion, mensajeEntrante });
+
+  if (rafaga !== 'SOLA') {
+    logger.info('Foto descartada por llegar junto con otras', { mensajeId: mensajeEntrante.id, rafaga });
+    if (rafaga === 'PRIMERA_DE_VARIAS') {
+      await responderYRegistrar(conversacion, contacto, MENSAJES.IMAGEN_VARIAS_FOTOS);
+    }
+    return;
+  }
+
+  // Se vuelve a leer la sesión: durante la espera de la ráfaga pudo cambiar (ej. llegó un texto).
+  const sesion = await sesionConversacionalService.getOrCreateSesion(conversacion.id);
+  const sesionActual = await prepararSesionParaMensaje({ contacto, conversacion, sesion });
+  if (!sesionActual) return;
+
+  if (sesionActual.operacionActiva === OPERACIONES.NOTA_CREDITO || sesionActual.operacionActiva === OPERACIONES.CANCELAR_DOCUMENTO) {
+    await responderYRegistrar(conversacion, contacto, MENSAJES.IMAGEN_SOLO_FACTURA);
+    return;
+  }
+
+  // Chequeo y alta sin ningún await en el medio: así dos fotos no pueden pasar las dos.
+  if (lecturasDeImagenEnCurso.has(conversacion.id)) {
+    await responderYRegistrar(conversacion, contacto, MENSAJES.IMAGEN_LECTURA_EN_CURSO);
+    return;
+  }
+  lecturasDeImagenEnCurso.add(conversacion.id);
+
+  try {
+    await leerFotoDeFactura({ contacto, conversacion, mensajeEntrante, waMessage });
+  } finally {
+    lecturasDeImagenEnCurso.delete(conversacion.id);
+  }
+};
+
+// A diferencia del audio, la foto NO se convierte a texto para pasarla por el parser
+// conversacional: leer una factura depende del formato (en qué columna de IVA está cada monto, qué
+// RUC es del emisor y cuál del cliente), así que la lee un extractor propio
+// (facturaImagenParser.service.js) que devuelve la factura ya estructurada. Desde el borrador en
+// adelante el flujo es el mismo que con texto: si faltan datos se piden, y nunca se emite sin que
+// el usuario confirme el resumen.
+const leerFotoDeFactura = async ({ contacto, conversacion, mensajeEntrante, waMessage }) => {
+  const media = waMessage.type === 'image' ? waMessage.image : waMessage.document;
+
+  if (!media?.id) {
+    await responderYRegistrar(conversacion, contacto, MENSAJES.IMAGEN_NO_DISPONIBLE);
+    return;
+  }
+
+  let buffer;
+  let mimeType;
+  try {
+    ({ buffer, mimeType } = await whatsappService.downloadMedia(media.id));
+  } catch (error) {
+    logger.error('Error descargando imagen de WhatsApp', safeError(error));
+    await responderYRegistrar(conversacion, contacto, MENSAJES.IMAGEN_NO_DISPONIBLE);
+    return;
+  }
+
+  mimeType = mimeType || media.mime_type || null;
+
+  // La extracción se guarda como JSON en `transcripcion` (igual que el texto de un audio), para
+  // poder auditar después qué leyó el bot de la foto (ver chatTranscripcion.js).
+  const registrarArchivo = (transcripcion) =>
+    mensajeService.crearArchivo({
+      mensajeId: mensajeEntrante.id,
+      whatsappMediaId: media.id,
+      nombreArchivo: media.filename || null,
+      mimeType: mimeType || 'application/octet-stream',
+      tamanioBytes: buffer.length,
+      rutaArchivo: null,
+      transcripcion,
+    });
+
+  if (!facturaImagenParserService.esMimeImagenSoportado(mimeType) || buffer.length > facturaImagenParserService.MAX_IMAGEN_BYTES) {
+    await registrarArchivo(null);
+    await responderYRegistrar(conversacion, contacto, MENSAJES.IMAGEN_FORMATO_NO_SOPORTADO);
+    return;
+  }
+
+  // Leer una foto tarda bastante más que un mensaje de texto: se avisa para que el usuario no
+  // reenvíe la foto pensando que no llegó.
+  await responderYRegistrar(conversacion, contacto, MENSAJES.IMAGEN_PROCESANDO);
+
+  const emisor = { ruc: contacto.empresa?.ruc || null, razonSocial: contacto.empresa?.razonSocial || null };
+
+  let salida;
+  try {
+    salida = await facturaImagenParserService.interpretarImagen({ buffer, mimeType, leyenda: media.caption, emisor });
+  } catch (error) {
+    logger.error('Error interpretando imagen de factura con OpenAI', safeError(error));
+    await registrarArchivo(null);
+    await responderYRegistrar(conversacion, contacto, mapImagenErrorAMensaje(error));
+    return;
+  }
+
+  await registrarArchivo(JSON.stringify(salida));
+
+  const { factura, advertencias, vacia } = facturaImagenParserService.normalizarExtraccion(salida, { emisor });
+
+  if (!salida.esComprobanteDeVenta || vacia) {
+    await responderYRegistrar(conversacion, contacto, MENSAJES.IMAGEN_SIN_FACTURA);
+    return;
+  }
+
+  // Una foto describe una factura completa: reemplaza cualquier borrador en curso en vez de
+  // mezclarse con él (borradorAnterior=null), así no se arrastran ítems, idempotencyKey ni
+  // resultadoEmision de otra venta.
+  const borrador = facturaBorradorService.construirBorrador(factura, null, advertencias);
+
+  // La lectura puede tardar decenas de segundos y, mientras tanto, el menú y los mensajes de texto
+  // siguen funcionando: el usuario pudo empezar una nota de crédito o una cancelación, confirmar o
+  // cancelar el borrador anterior, etc. Por eso se vuelve a leer la sesión y, si ya no está en una
+  // emisión de factura activa, se descarta la foto (avisando) en vez de pisar el borrador de otra
+  // operación. transicionar solo compara el estado, no la operación: este chequeo cubre lo demás.
+  const sesionVigente = await sesionConversacionalService.getOrCreateSesion(conversacion.id);
+  const sigueSiendoFactura = sesionVigente.operacionActiva == null || sesionVigente.operacionActiva === OPERACIONES.EMITIR_FACTURA;
+
+  if (!sigueSiendoFactura || !ESTADOS_ACTIVOS.includes(sesionVigente.estado)) {
+    logger.info('Foto descartada: la sesión cambió durante la lectura', {
+      mensajeId: mensajeEntrante.id,
+      estado: sesionVigente.estado,
+      operacionActiva: sesionVigente.operacionActiva,
+    });
+    await responderYRegistrar(conversacion, contacto, MENSAJES.IMAGEN_DESCARTADA_SESION_CAMBIO);
+    return;
+  }
+
+  if (sesionVigente.operacionActiva == null) {
+    await sesionConversacionalService.setOperacionActiva(sesionVigente.id, OPERACIONES.EMITIR_FACTURA);
+  }
+
+  // Nunca se emite directo desde la foto: si está todo se muestra el resumen (con las advertencias
+  // de lectura) y se espera la confirmación explícita del usuario en otro mensaje.
+  const faltanDatos = borrador.camposFaltantes.length > 0;
+  const actualizada = await sesionConversacionalService.transicionar(
+    sesionVigente.id,
+    ESTADOS_ACTIVOS,
+    faltanDatos ? ESTADOS_SESION.CAPTURANDO_DATOS : ESTADOS_SESION.ESPERANDO_CONFIRMACION,
+    borrador,
+  );
+
+  if (!actualizada) {
+    // El estado cambió entre la relectura y acá: mismo caso que arriba. Nunca se deja al usuario
+    // sin respuesta después de haberle dicho "la estoy leyendo".
+    await responderYRegistrar(conversacion, contacto, MENSAJES.IMAGEN_DESCARTADA_SESION_CAMBIO);
+    return;
+  }
+
+  const respuesta = faltanDatos
+    ? construirMensajeCamposFaltantes(borrador.camposFaltantes, { advertencias: borrador.advertencias })
+    : construirResumenConfirmacion(borrador, { advertencias: borrador.advertencias });
+  await responderYRegistrar(conversacion, contacto, respuesta);
+};
+
 // Las reacciones (emoji sobre un mensaje previo) llegan en value.messages[] como un
 // evento propio (type: 'reaction', con id distinto al del mensaje reaccionado), así
 // que no las deduplica registrarEntrante ni encajan en ningún tipo de TIPO_MENSAJE_POR_
@@ -1189,7 +1393,12 @@ const procesarMensajeEntrante = async (waMessage) => {
   const conversacion = await conversacionService.getOrCreateAbierta(contacto.id);
   await conversacionService.actualizarUltimoMensaje(conversacion.id);
 
-  const tipo = TIPO_MENSAJE_POR_WHATSAPP[waMessage.type] || 'TEXTO';
+  // Una foto mandada como documento ("sin compresión") se registra como IMAGEN: así cuenta para
+  // detectar varias fotos mandadas juntas (ver clasificarFotoEnRafaga).
+  const esImagen =
+    waMessage.type === 'image' ||
+    (waMessage.type === 'document' && facturaImagenParserService.esMimeImagenSoportado(waMessage.document?.mime_type));
+  const tipo = esImagen ? 'IMAGEN' : TIPO_MENSAJE_POR_WHATSAPP[waMessage.type] || 'TEXTO';
   const textoEntrante = waMessage.type === 'text' ? waMessage.text?.body ?? null : null;
 
   const { mensaje: mensajeEntrante, duplicado } = await mensajeService.registrarEntrante({
@@ -1217,6 +1426,13 @@ const procesarMensajeEntrante = async (waMessage) => {
       whatsappMensajeId: waMessage.id,
       antiguedadMs,
     });
+    return;
+  }
+
+  // Las fotos leen la sesión recién después de la espera por ráfaga (puede cambiar mientras
+  // tanto), así que se despachan antes de leerla acá.
+  if (esImagen) {
+    await manejarImagenEntrante({ contacto, conversacion, mensajeEntrante, waMessage });
     return;
   }
 

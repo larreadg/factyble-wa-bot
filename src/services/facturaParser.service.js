@@ -365,6 +365,7 @@ const interpretar = async ({ mensajeUsuario, borradorActual }) => {
 module.exports = {
   interpretar,
   ParserOutputSchema,
+  ClienteSchema,
   FACTURA_PARSER_PROMPT_VERSION,
   MAX_MENSAJE_LEN,
   MAX_ITEMS,

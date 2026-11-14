@@ -52,3 +52,24 @@ test('actualizarEstadoPorWhatsappId actualiza el estado de entrega/lectura', asy
   assert.equal(argsRecibidos.where.whatsappMensajeId, 'wamid.out');
   assert.equal(argsRecibidos.data.estado, 'LEIDO');
 });
+
+test('listarImagenesEntrantesEntre filtra fotos entrantes de la conversación por hora de recepción', async (t) => {
+  const findMany = mockProp(t, prisma.mensaje, 'findMany', async () => [{ id: 1 }]);
+  const desde = new Date('2026-11-14T12:00:00.000Z');
+  const hasta = new Date('2026-11-14T12:00:08.000Z');
+
+  const fechaMensajeMinima = new Date('2026-11-14T11:45:00.000Z');
+
+  const resultado = await mensajeService.listarImagenesEntrantesEntre(7, desde, hasta, fechaMensajeMinima);
+
+  assert.deepEqual(resultado, [{ id: 1 }]);
+  const { where, orderBy } = findMany.calls[0][0];
+  assert.deepEqual(where, {
+    conversacionId: 7,
+    direccion: 'ENTRANTE',
+    tipo: 'IMAGEN',
+    fechaCreacion: { gte: desde, lte: hasta },
+    fechaMensaje: { gte: fechaMensajeMinima },
+  });
+  assert.deepEqual(orderBy, { id: 'asc' });
+});
